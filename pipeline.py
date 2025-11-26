@@ -1,8 +1,9 @@
 from loguru import logger
 import pandas as pd
+from datetime import datetime
 from utils.matching_utils import clean_data, exact_match, not_exact_match, best_match_jw, number_of_tokens_match
 
-logger.add("pipeline.log")
+logger.add("logs/pipeline_{time}.log")
 
 logger.info("Starting data cleaning pipeline")
 
@@ -80,7 +81,7 @@ logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_ma
 df_tokens_not_match = df_jw_not_match[df_jw_not_match['Supplier_score'] < 0.5]
 logger.info("Final remaining unmatched records: {}", len(df_tokens_not_match))
 
-logger.info("Percentage of rows that remain unmatched on the supplier field: {}%", (len(df_tokens_not_match) / len(df_devices_data)) * 100)
+logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_tokens_not_match) / len(df_devices_data)) * 100)
 
 logger.info("Starting brand column matching process")
 
@@ -142,6 +143,99 @@ logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_ma
 df_tokens_not_match = df_jw_not_match[df_jw_not_match['Brand_score'] < 0.5]
 logger.info("Final remaining unmatched records: {}", len(df_tokens_not_match))
 
-logger.info("Percentage of rows that remain unmatched after brand matching: {}%", (len(df_tokens_not_match) / len(df_devices_data_distinct_tokens)) * 100)
+logger.info("Percentage of rows that remain unmatched after brand matching: {:,.2f}%", (len(df_tokens_not_match) / len(df_devices_data_distinct_tokens)) * 100)
+
+logger.info("Starting matching process to remove suppliers not in the catalogue from eligible records")
+
+suppliers_not_in_catalogue = ['zimmer', 'zephyr', 'york', 'wright', 'workshop', 'wolf', "wellead", 'vygon', 'volcano', 'veryan', 'vernacare', 'veni vidi', 'vascular perspectives ltd'
+                              'varian', 'urotech', 'unisurge', 'uniprox', 'uhb', 'uclh', 'trust lab', 'tps healthcare group', 'total tmh', 'toffeln ltd', 'tobii dynavox',
+                              'tj smith & nephew ltd', 'thuasne uk ltd', 'teleflex medical ltd', 'technovent', 'technomed', 'taewong', 't&r medical', 'synthes', 'symbios',
+                              'swann morton', 'supply chain coordination ltd sccl', 'streifeneder fg kg', 'straumann', 'storz', 'steeper', 'st georges max fac lab',
+                              'squadron medical ltd', 'spinecor', 'solventum united kindom hc', 'shockwave', 'severn', 'rocialle', 'rocamed', 'respironics', 'resmed',
+                              'renishaw', 'remserve', 'qah', 'pusen', 'pure dental laboratory', 'pulmonx', 'proteor', 'prevail', 'polar medical ltd', 'phillips', 'perclose prostyle',
+                              'ottobock healthcare plc', 'osteotec', 'ossur', 'orthofix', 'ortho europe', 'opcare', 'olympus', 'novasure', 'molnlycke healthcare ltd', 'medtech',
+                              'mediq', 'medi uk', 'medartis', 'medalliance', 'medacta', 'meadows', 'maxillofacial', 'matrixrib', 'magictouch', 'lumenis', 'lourenco', 
+                              'lemaitre', 'leda orthopaedics', 'lawton', 'kuros biosciences', 'kls martin', 'kimal', 'kci medical ltd', 'jri orthopaedics', 'john florence',
+                              'integra neuroscience', 'insulet', 'inari', 'implantium', 'implantcast', 'hugh steeper', 'hologic', 'hoffmann', 'hindocha', 'henry schein dental',
+                              'gynesonics', 'glubran', 'gbuk', 'fondazione banca degli occhi del veneto onlus', 'fisher paykel', 'fannin uk ltd', 'eurosurgical ltd', 'ethicon',
+                              'ergea', 'energizer trading ltd', 'embreis ab', 'elshazly', 'elis uk camberwell', 'ee accessories ltd', 'dexcom uk', 'devman', 'depuy synthes',
+                              'dentsply sirona', "cypress adaptive llc", 'cryolife europa', 'college park industries', 'covidien', 'conmed', 'coloplast', 'clinisupplies ltd',
+                              'clinimed', 'cj medical', 'chalice', 'cerenovus', 'cavendish', 'casterbridge', 'cardionovum', 'bunzl healthcare', 'breas medical', 'brainlab ltd', 
+                              'bpo ltd', 'bone support ltd', 'blatchford', 'biospectrum ltd', 'biomet', 'biocomposites ltd', 'bgs', 'berlin heart gmbh', 'baxter healthcare ltd',
+                              'bard ltd', 'b braun medical ltd', 'atos', 'astra', 'arthrex ltd', 'apr medtech limited', 'apatech', 'american prosthetic components llc', 'alps czech',
+                              'akram','airsense', 'advancis medical', 'advanced bionics', 'adler ortho uk ltd', 'acumed ltd', 'acrostak', 'abiomed', 'aah pharmaceuticals ltd',
+                              '365 healthcare'
+                              ]
+
+df_suppliers_not_in_catalogue = pd.DataFrame({
+    "index": range(1, len(suppliers_not_in_catalogue) + 1),
+    "Supplier_missing": suppliers_not_in_catalogue
+})
+
+# attempting to REMOVE SUPPLIERS NOT IN CATALOGUE
+df_tokens_not_match = df_tokens_not_match.drop(['Multiple_matches', 'Brand', 'Supplier','Brand_score', 'CLN_manufacturer_tokens_list', '_merge'], axis='columns')
+
+# clean data and extract distinct tokens for manufacturers in both datasets
+df_not_in_catalogue_suppliers_distinct_tokens = clean_data(df_suppliers_not_in_catalogue, 'Supplier_missing', 'Supplier_missing_tokens')
+
+#  get rows where the brand matches exactly based on tokens after cleaning
+df_exact_matches_brand = exact_match(df_not_in_catalogue_suppliers_distinct_tokens, df_tokens_not_match, 'Supplier_missing_tokens', 'Supplier_missing', 'CLN_Manufacturer_tokens')
+logger.info("Exact matches found: {}", len(df_exact_matches_brand))
+
+# get remaining rows to match in later steps 
+df_not_exact_matches_brand = not_exact_match(df_not_in_catalogue_suppliers_distinct_tokens, df_tokens_not_match, 'Supplier_missing_tokens', 'Supplier_missing', 'CLN_Manufacturer_tokens').drop(['Supplier_missing_tokens', 'Supplier_missing'], axis='columns')
+logger.info("Rows remaining to be matched: {}", len(df_not_exact_matches_brand))
+
+
+# create list of unique brands
+unique_brands = df_suppliers_not_in_catalogue
+
+# find best supplier matches using Jaro-Winkler similarity
+df_not_exact_matches_brand[['Supplier_missing', 'Supplier_missing_score']] = df_not_exact_matches_brand['CLN_Manufacturer_tokens'].apply(
+    lambda x: pd.Series(best_match_jw(x, unique_brands))
+)
+
+
+# filter matches with a score above the threshold
+df_jw_match = df_not_exact_matches_brand[df_not_exact_matches_brand['Supplier_missing_score'] >= 0.86]
+logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
+
+df_jw_not_match = df_not_exact_matches_brand[df_not_exact_matches_brand['Supplier_missing_score'] < 0.86]
+logger.info("Remaining to be matched: {}", len(df_jw_not_match))
+
+
+df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
+df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens_list'] = df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens'].str.split()
+brand_tokens_list = df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens_list'].drop_duplicates().to_list()
+
+cleaned_brand_tokens_list = {}
+tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted']
+for brand in brand_tokens_list:
+    cleaned_brand = []
+    for token in brand:
+        if token not in tokens_to_remove:
+            cleaned_brand.append(token)
+    cleaned_brand_tokens_list[' '.join(brand)] = cleaned_brand
+
+df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(lambda x: [token for token in x if token not in tokens_to_remove])
+
+# find number of tokens match
+df_jw_not_match[['Supplier_missing', 'Supplier_missing_score', 'Multiple_matches']] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(
+    lambda x: pd.Series(number_of_tokens_match(x, cleaned_brand_tokens_list))
+)
+# filter matches with more than 50% of tokens matching
+df_tokens_match = df_jw_not_match[df_jw_not_match['Supplier_missing_score'] > 0.5]
+logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
+
+# get final remaining unmatched rows
+df_tokens_not_match = df_jw_not_match[df_jw_not_match['Supplier_missing_score'] < 0.5]
+logger.info("Final remaining unmatched records: {}", len(df_tokens_not_match))
+
+logger.info("Percentage of rows that remain unmatched: {:,.2f}%", (len(df_tokens_not_match) / len(df_devices_data_distinct_tokens)) * 100)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_path = f'data/unmatched_rows_{timestamp}.csv'
+df_tokens_not_match.to_csv(output_path, index=False)
+logger.info("Unmatched rows saved to {}", output_path)
 
 logger.info("Data cleaning pipeline completed successfully.\n")
