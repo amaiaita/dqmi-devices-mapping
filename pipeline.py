@@ -116,7 +116,7 @@ logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
 df_jw_not_match = df_not_exact_matches_brand[df_not_exact_matches_brand['Brand_score'] < 0.86]
 logger.info("Remaining to be matched: {}", len(df_jw_not_match))
 
-
+df_jw_not_match = df_jw_not_match.copy()
 df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
 df_catalogue_brand_distinct_tokens['Brand_tokens_list'] = df_catalogue_brand_distinct_tokens['Brand_tokens'].str.split()
 brand_tokens_list = df_catalogue_brand_distinct_tokens['Brand_tokens_list'].drop_duplicates().to_list()
@@ -147,30 +147,7 @@ logger.info("Percentage of rows that remain unmatched after brand matching: {:,.
 
 logger.info("Starting matching process to remove suppliers not in the catalogue from eligible records")
 
-suppliers_not_in_catalogue = ['zimmer', 'zephyr', 'york', 'wright', 'workshop', 'wolf', "wellead", 'vygon', 'volcano', 'veryan', 'vernacare', 'veni vidi', 'vascular perspectives ltd'
-                              'varian', 'urotech', 'unisurge', 'uniprox', 'uhb', 'uclh', 'trust lab', 'tps healthcare group', 'total tmh', 'toffeln ltd', 'tobii dynavox',
-                              'tj smith & nephew ltd', 'thuasne uk ltd', 'teleflex medical ltd', 'technovent', 'technomed', 'taewong', 't&r medical', 'synthes', 'symbios',
-                              'swann morton', 'supply chain coordination ltd sccl', 'streifeneder fg kg', 'straumann', 'storz', 'steeper', 'st georges max fac lab',
-                              'squadron medical ltd', 'spinecor', 'solventum united kindom hc', 'shockwave', 'severn', 'rocialle', 'rocamed', 'respironics', 'resmed',
-                              'renishaw', 'remserve', 'qah', 'pusen', 'pure dental laboratory', 'pulmonx', 'proteor', 'prevail', 'polar medical ltd', 'phillips', 'perclose prostyle',
-                              'ottobock healthcare plc', 'osteotec', 'ossur', 'orthofix', 'ortho europe', 'opcare', 'olympus', 'novasure', 'molnlycke healthcare ltd', 'medtech',
-                              'mediq', 'medi uk', 'medartis', 'medalliance', 'medacta', 'meadows', 'maxillofacial', 'matrixrib', 'magictouch', 'lumenis', 'lourenco', 
-                              'lemaitre', 'leda orthopaedics', 'lawton', 'kuros biosciences', 'kls martin', 'kimal', 'kci medical ltd', 'jri orthopaedics', 'john florence',
-                              'integra neuroscience', 'insulet', 'inari', 'implantium', 'implantcast', 'hugh steeper', 'hologic', 'hoffmann', 'hindocha', 'henry schein dental',
-                              'gynesonics', 'glubran', 'gbuk', 'fondazione banca degli occhi del veneto onlus', 'fisher paykel', 'fannin uk ltd', 'eurosurgical ltd', 'ethicon',
-                              'ergea', 'energizer trading ltd', 'embreis ab', 'elshazly', 'elis uk camberwell', 'ee accessories ltd', 'dexcom uk', 'devman', 'depuy synthes',
-                              'dentsply sirona', "cypress adaptive llc", 'cryolife europa', 'college park industries', 'covidien', 'conmed', 'coloplast', 'clinisupplies ltd',
-                              'clinimed', 'cj medical', 'chalice', 'cerenovus', 'cavendish', 'casterbridge', 'cardionovum', 'bunzl healthcare', 'breas medical', 'brainlab ltd', 
-                              'bpo ltd', 'bone support ltd', 'blatchford', 'biospectrum ltd', 'biomet', 'biocomposites ltd', 'bgs', 'berlin heart gmbh', 'baxter healthcare ltd',
-                              'bard ltd', 'b braun medical ltd', 'atos', 'astra', 'arthrex ltd', 'apr medtech limited', 'apatech', 'american prosthetic components llc', 'alps czech',
-                              'akram','airsense', 'advancis medical', 'advanced bionics', 'adler ortho uk ltd', 'acumed ltd', 'acrostak', 'abiomed', 'aah pharmaceuticals ltd',
-                              '365 healthcare'
-                              ]
-
-df_suppliers_not_in_catalogue = pd.DataFrame({
-    "index": range(1, len(suppliers_not_in_catalogue) + 1),
-    "Supplier_missing": suppliers_not_in_catalogue
-})
+df_suppliers_not_in_catalogue = pd.read_csv('data/suppliers_not_in_catalogue.csv')
 
 # attempting to REMOVE SUPPLIERS NOT IN CATALOGUE
 df_tokens_not_match = df_tokens_not_match.drop(['Multiple_matches', 'Brand', 'Supplier','Brand_score', 'CLN_manufacturer_tokens_list', '_merge'], axis='columns')
@@ -238,4 +215,4 @@ output_path = f'data/unmatched_rows_{timestamp}.csv'
 df_tokens_not_match.to_csv(output_path, index=False)
 logger.info("Unmatched rows saved to {}", output_path)
 
-logger.info("Data cleaning pipeline completed successfully.\n")
+logger.info("Matching Manufacturer pipeline completed successfully.\n")
