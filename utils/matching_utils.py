@@ -71,7 +71,7 @@ def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels,
 
     return df_devices
 
-def best_match_jw(name, list_to_match):
+def best_match_jw(name, df_to_match, col_to_match, col_labels):
     """
     Find the best matching supplier for a given name using Jaro-Winkler similarity.
 
@@ -83,13 +83,17 @@ def best_match_jw(name, list_to_match):
         tuple: A tuple containing the best matching supplier (str) and the best score (float).
                If no match is found, returns (None, -1).
     """
+    df_to_match = df_to_match.copy().drop_duplicates(col_to_match)[[col_to_match, col_labels]]
+    dict_to_match = df_to_match.set_index(col_to_match)[col_labels].to_dict()
+    list_to_match = list(dict_to_match.keys())
+
     best_match = None
     best_score = -1
     for supplier in list_to_match:
         score = get_jaro_winkler_similarity(name, supplier)
         if score > best_score:
             best_score = score
-            best_match = supplier
+            best_match = dict_to_match[supplier]
     return best_match, best_score
 
 def number_of_tokens_match(name_tokens, supplier_list):

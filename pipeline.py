@@ -41,25 +41,24 @@ logger.info("Starting supplier column matching process")
 #  get rows where the supplier matches exactly based on tokens after cleaning
 df_devices = exact_match(df_catalogue_suppliers, df_devices, 'Supplier_tokens', 'catalogue_manufacturers_index', 'CLN_Manufacturer_tokens', 'Manufacturer_label')
 logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_tokens']))
-print(df_devices.head())
-# get remaining rows to match in later steps 
 logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
-# # create list of unique suppliers
-# unique_suppliers = df_catalogue_supplier_distinct_tokens['Supplier_tokens'].drop_duplicates().to_list()
-# logger.info("Unique suppliers extracted: {}", len(unique_suppliers))
+df_to_jw_match = df_devices[df_devices['Manufacturer_label'].isnull()]
+df_matched_previously = df_devices[df_devices['Manufacturer_label'].notnull()]
+# find best supplier matches using Jaro-Winkler similarity
+df_to_jw_match[['Manufacturer_label', 'Supplier_score']] = df_to_jw_match['CLN_Manufacturer_tokens'].apply(
+    lambda x: pd.Series(best_match_jw(x, df_catalogue_suppliers, 'Supplier_tokens', 'catalogue_manufacturers_index'))
+)
 
-# # find best supplier matches using Jaro-Winkler similarity
-# df_not_exact_matches_supplier[['Supplier', 'Supplier_score']] = df_not_exact_matches_supplier['CLN_Manufacturer_tokens'].apply(
-#     lambda x: pd.Series(best_match_jw(x, unique_suppliers))
-# )
+# filter matches with a score above the threshold
+df_jw_match = df_to_jw_match[df_to_jw_match['Supplier_score'] >= 0.86]
+df_rest = df_to_jw_match[df_to_jw_match['Supplier_score'] < 0.86]
 
-# # filter matches with a score above the threshold
-# df_jw_match = df_not_exact_matches_supplier[df_not_exact_matches_supplier['Supplier_score'] >= 0.86]
-# logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
+df_devices = pd.concat([df_matched_previously, df_jw_match, df_rest])
 
-# df_jw_not_match = df_not_exact_matches_supplier[df_not_exact_matches_supplier['Supplier_score'] < 0.86]
-# logger.info("Remaining to be matched: {}", len(df_jw_not_match))
+logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
+
+logger.info("Remaining to be matched: {}", len(df_rest))
 
 
 # df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
