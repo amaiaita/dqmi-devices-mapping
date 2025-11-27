@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from pyjarowinkler.distance import get_jaro_winkler_similarity
 
 def clean_data(df: pd.DataFrame,
@@ -48,98 +49,27 @@ def clean_data(df: pd.DataFrame,
     return df_output
 
 
-def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2):
-    """
-    Performs an exact match between two DataFrames based on lowercase comparison of specified columns.
-    
-    This function creates lowercase versions of the specified columns from both DataFrames and performs
-    a right join to find exact matches. The function returns only rows where a match was found in the
-    reference DataFrame.
-    
-    Parameters
-    ----------
-    reference_df : pd.DataFrame
-        The reference DataFrame containing the data to match against.
-    df2 : pd.DataFrame
-        The second DataFrame to match with the reference DataFrame.
-    col_df_1_for_comparison : str
-        The column name in reference_df to use for comparison.
-    col_df_1_for_labels : str
-        The column name in reference_df to use for labels (included in output).
-    col_df_2 : str
-        The column name in df2 to use for comparison.
-    
-    Returns
-    -------
-    pd.DataFrame
-        A merged DataFrame containing rows where exact matches (case-insensitive) were found.
-        Rows where col_df_1_for_comparison is null are excluded. Lowercase comparison columns
-        are removed from the output.
-    
-    Notes
-    -----
-    - The comparison is case-insensitive, performed on lowercase versions of the columns.
-    - Duplicates in the reference DataFrame are removed before processing.
-    - Column suffixes '_ref' and '_other' are applied to overlapping column names.
-    """
+def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label):
     # create copies and prepare lowercase comparison columns
-    df_1_trimmed = reference_df[[col_df_1_for_comparison, col_df_1_for_labels]].drop_duplicates().copy()
-    df_2_trimmed = df2.copy()
+    
+    df_1_trimmed = reference_df.drop_duplicates(col_df_1_for_comparison)[[col_df_1_for_comparison, col_df_1_for_labels]].copy()
+    reference_df_cols = df_1_trimmed.columns.tolist()
+    df_2_trimmed = df2[df2['Manufacturer_label'].isnull()].copy()
+    df_2_prelabelled = df2[df2['Manufacturer_label'].notnull()].copy()
 
-    col1_lower = f'{col_df_1_for_comparison}_lower'
-    col2_lower = f'{col_df_2}_lower'
-
-    df_1_trimmed[col1_lower] = df_1_trimmed[col_df_1_for_comparison].str.lower()
-    df_2_trimmed[col2_lower] = df_2_trimmed[col_df_2].str.lower()
-
-    # do an inner join on the prepared lowercase token columns to get exact token matches
     matches = df_1_trimmed.merge(
         df_2_trimmed,
-        left_on=col1_lower,
-        right_on=col2_lower,
+        left_on=col_df_1_for_comparison,
+        right_on=col_df_2,
         how='right',
-        suffixes=('_ref', '_other')
     )
 
-    return matches[matches[col_df_1_for_comparison].notnull()].drop(columns=[col1_lower, col2_lower])
+    matches[col_df2_label] = np.where(matches[col_df_1_for_labels].notnull(), matches[col_df_1_for_labels], None)
+    matches['level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_' + col_df_1_for_comparison, None)
 
-def not_exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2):
-    """
-    Not Exact Match Function
+    df_devices = pd.concat([matches, df_2_prelabelled]).drop(columns = reference_df_cols)
 
-    This function compares two DataFrames to identify non-matching rows based on a specified column from a reference DataFrame and a column from another DataFrame. It performs a case-insensitive comparison by converting the relevant columns to lowercase.
-
-    Parameters:
-        reference_df (pd.DataFrame): The reference DataFrame containing the primary data for comparison.
-        df2 (pd.DataFrame): The secondary DataFrame to be compared against the reference DataFrame.
-        col_df_1_for_comparison (str): The column name in the reference DataFrame to be used for comparison.
-        col_df_1_for_labels (str): The column name in the reference DataFrame to be used for labeling the results.
-        col_df_2 (str): The column name in the secondary DataFrame to be compared.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing the non-matching rows from the secondary DataFrame, excluding the comparison columns.
-    """
-    # create copies and prepare lowercase comparison columns
-    df_1_trimmed = reference_df[[col_df_1_for_comparison, col_df_1_for_labels]].drop_duplicates().copy()
-    df_2_trimmed = df2.copy()
-
-    col1_lower = f'{col_df_1_for_comparison}_lower'
-    col2_lower = f'{col_df_2}_lower'
-
-    df_1_trimmed[col1_lower] = df_1_trimmed[col_df_1_for_comparison].str.lower()
-    df_2_trimmed[col2_lower] = df_2_trimmed[col_df_2].str.lower()
-
-    # merge with indicator and keep only the non-matching rows from either side
-    matches = df_1_trimmed.merge(
-        df_2_trimmed,
-        left_on=col1_lower,
-        right_on=col2_lower,
-        how='right',
-        suffixes=('_ref', '_other'),
-        indicator=True
-    )
-
-    return matches[matches[col_df_1_for_comparison].isnull()].drop(columns=[col1_lower, col2_lower])
+    return df_devices
 
 def best_match_jw(name, list_to_match):
     """
