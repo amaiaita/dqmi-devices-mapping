@@ -25,9 +25,11 @@ logger.info("Devices data loaded successfully. Number of records: {}", len(df_de
 df_devices = df_devices_data.reset_index()[['index', 'CLN_Manufacturer', 'CLN_Manufacturer_Device_Name']]
 df_devices.to_csv('data/devices_to_map.csv', index=True)
 
+tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted', 'e direct']
+
 # clean data and extract distinct tokens for manufacturers in both datasets
-df_catalogue_suppliers = clean_data(df_catalogue_manufacturers, 'Supplier', 'Supplier_tokens')
-df_devices = clean_data(df_devices, 'CLN_Manufacturer', 'CLN_Manufacturer_tokens')
+df_catalogue_suppliers = clean_data(df_catalogue_manufacturers, 'Supplier', 'Supplier_tokens', tokens_to_remove)
+df_devices = clean_data(df_devices, 'CLN_Manufacturer', 'CLN_Manufacturer_tokens', tokens_to_remove)
 
 # correctly label nulls as unmatchable
 df_devices['Manufacturer_label'] = np.where((df_devices['CLN_Manufacturer_tokens'].isnull() |
@@ -45,33 +47,7 @@ logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manuf
 
 df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', 0.86)
 
-# df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
-# df_catalogue_supplier_distinct_tokens['Supplier_tokens_list'] = df_catalogue_supplier_distinct_tokens['Supplier_tokens'].str.split()
-# supplier_tokens_list = df_catalogue_supplier_distinct_tokens['Supplier_tokens_list'].drop_duplicates().to_list()
-
-# # remove most common tokens that would inflate the percentage of overlap
-# cleaned_supplier_tokens_list = {}
-# tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted']
-# for supplier in supplier_tokens_list:
-#     cleaned_supplier = []
-#     for token in supplier:
-#         if token not in tokens_to_remove:
-#             cleaned_supplier.append(token)
-#     cleaned_supplier_tokens_list[' '.join(supplier)] = cleaned_supplier
-
-# df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(lambda x: [token for token in x if token not in tokens_to_remove])
-
-# # find number of tokens match
-# df_jw_not_match[['Supplier', 'Supplier_score', 'Multiple_matches']] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(
-#     lambda x: pd.Series(number_of_tokens_match(x, cleaned_supplier_tokens_list))
-# )
-# # filter matches with more than 50% of tokens matching
-# df_tokens_match = df_jw_not_match[df_jw_not_match['Supplier_score'] > 0.5]
-# logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
-
-# # get final remaining unmatched rows
-# df_tokens_not_match = df_jw_not_match[df_jw_not_match['Supplier_score'] < 0.5]
-# logger.info("Final remaining unmatched records: {}", len(df_tokens_not_match))
+df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens_list', 'Supplier_tokens_list', 'catalogue_manufacturers_index', 0.5)
 
 # logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_tokens_not_match) / len(df_devices_data)) * 100)
 

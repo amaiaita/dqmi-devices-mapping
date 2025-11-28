@@ -2,9 +2,16 @@ import pandas as pd
 import numpy as np
 from pyjarowinkler.distance import get_jaro_winkler_similarity
 
+def remove_tokens(text, tokens):
+        tokens_set = set(tokens)
+        words = text.split()
+        cleaned_words = [w for w in words if w not in tokens_set]
+        return " ".join(cleaned_words)
+
 def clean_data(df: pd.DataFrame,
                 select_col: str,
-                token_col: str):
+                token_col: str,
+                tokens_to_remove: list):
     """
     Clean and normalize text data in a DataFrame column.
     """
@@ -45,6 +52,9 @@ def clean_data(df: pd.DataFrame,
         .str.split()
         .apply(lambda tokens: " ".join(tokens) if tokens else "")
     )
+
+    df_output[token_col] = df_output[token_col].astype(str).str.lower().apply(lambda x: remove_tokens(x, tokens_to_remove))
+    df_output[f'{token_col}_list'] = df_output[token_col].str.split()
 
     return df_output
 
@@ -99,6 +109,7 @@ def best_match_jw(name, df_to_match, col_to_match, col_labels):
 def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, score_threshold=0.86):
     df_to_jw_match = df_to_match[df_to_match[label_col_name].isnull()]
     df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
+    reference_df_cols = df_reference.columns.tolist()
     # find best supplier matches using Jaro-Winkler similarity
     df_to_jw_match[[label_col_name, score_col_name]] = df_to_jw_match[col_to_match].apply(
         lambda x: pd.Series(best_match_jw(x, df_reference, reference_col, reference_labels_col))
@@ -107,52 +118,77 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
     # filter matches with a score above the threshold
     df_jw_match = df_to_jw_match[df_to_jw_match[score_col_name] >= score_threshold]
     df_rest = df_to_jw_match[df_to_jw_match[score_col_name] < score_threshold]
+    df_jw_match['level'] = 'jaro_winkler_match_' + col_to_match
+    df_rest[label_col_name] = None
 
     logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
     logger.info("Remaining to be matched: {}", len(df_rest))
-    
-    df_output = pd.concat([df_matched_previously, df_jw_match, df_rest])
+
+    reference_df_cols.extend([score_col_name])
+    df_output = pd.concat([df_matched_previously, df_jw_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
     
     return df_output
 
-def number_of_tokens_match(name_tokens, supplier_list):
+def number_of_tokens_overlap(name_tokens, df_to_match, col_to_match, col_labels):
     """
-    Calculates the best matching supplier based on the number of common tokens 
-    between the provided name tokens and the suppliers' tokens.
-
-    Parameters:
-        name_tokens (list): A list of tokens representing the name to match.
-        supplier_list (dict): A dictionary where keys are supplier names and 
-                              values are lists of tokens associated with each supplier.
-
-    Returns:
-        tuple: 
-            - If there are multiple best matches:
-                - list: A list of suppliers that have the highest matching score.
-                - int: The score of the best match (always 0 in this case).
-            - If there is a single best match:
-                - str: The name of the best matching supplier.
-                - float: The score of the best match.
-                - bool: Indicates whether there were multiple matches (False).
+    Compare a list of tokens (name_tokens) against each row in df_to_match,
+    where df_to_match[col_to_match] contains a list of tokens.
     """
+
+    # keep only the two necessary columns
+    df = df_to_match[[col_to_match, col_labels]].copy()
+
     best_match = None
     best_score = 0
     multiple_matches = False
     best_match_list = []
-    for supplier in supplier_list.keys():
-        common_tokens = list(set(name_tokens) & set(supplier_list[supplier]))
-        try:
-            score = len(common_tokens)/len(supplier_list[supplier])
-        except ZeroDivisionError:
+
+    name_set = set(name_tokens)
+
+    for idx, row in df.iterrows():
+        supplier_tokens = row[col_to_match] or []  # ensure list
+        supplier_set = set(supplier_tokens)
+
+        if len(supplier_set) == 0:
             score = 0
+        else:
+            common_tokens = name_set & supplier_set
+            score = len(common_tokens) / len(supplier_set)
+
         if score > best_score:
             best_score = score
-            best_match = supplier
-            best_match_list = [supplier]
+            best_match = row[col_labels]
+            best_match_list = [row[col_labels]]
+            multiple_matches = False
+
         elif score == best_score and score != 0:
             multiple_matches = True
-            best_match_list.append(supplier)
+            best_match_list.append(row[col_labels])
+
     if multiple_matches:
-        best_score = 0
-        return best_match_list, best_score
-    return best_match, best_score, multiple_matches
+        return best_match_list, 0, True
+
+    return best_match, best_score, False
+
+
+
+def number_of_tokens_match(logger, df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, score_threshold=0.5):
+    df_to_token_match = df_to_match[df_to_match[label_col_name].isnull()]
+    df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
+    reference_df_cols = df_reference.columns.tolist()
+    # find number of tokens match
+    df_to_token_match[[label_col_name, score_col_name, 'Multiple_matches']] = df_to_token_match[col_to_match].apply(
+        lambda x: pd.Series(number_of_tokens_overlap(x, df_reference, reference_col, reference_labels_col))
+    )
+
+    df_tokens_match = df_to_token_match[df_to_token_match[score_col_name] > score_threshold]
+    df_tokens_match['level'] = 'token_overlap_match_' + col_to_match
+    logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
+    
+    df_rest = df_to_token_match[df_to_token_match[score_col_name] <= score_threshold]
+    df_rest[label_col_name] = None
+    logger.info("Final remaining unmatched records: {}", len(df_rest))
+
+    reference_df_cols.extend([score_col_name, 'Multiple_matches'])
+    df_output = pd.concat([df_matched_previously, df_tokens_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
+    return df_output
