@@ -96,6 +96,25 @@ def best_match_jw(name, df_to_match, col_to_match, col_labels):
             best_match = dict_to_match[supplier]
     return best_match, best_score
 
+def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, score_threshold=0.86):
+    df_to_jw_match = df_to_match[df_to_match[label_col_name].isnull()]
+    df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
+    # find best supplier matches using Jaro-Winkler similarity
+    df_to_jw_match[[label_col_name, score_col_name]] = df_to_jw_match[col_to_match].apply(
+        lambda x: pd.Series(best_match_jw(x, df_reference, reference_col, reference_labels_col))
+    )
+
+    # filter matches with a score above the threshold
+    df_jw_match = df_to_jw_match[df_to_jw_match[score_col_name] >= score_threshold]
+    df_rest = df_to_jw_match[df_to_jw_match[score_col_name] < score_threshold]
+
+    logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
+    logger.info("Remaining to be matched: {}", len(df_rest))
+    
+    df_output = pd.concat([df_matched_previously, df_jw_match, df_rest])
+    
+    return df_output
+
 def number_of_tokens_match(name_tokens, supplier_list):
     """
     Calculates the best matching supplier based on the number of common tokens 

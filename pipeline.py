@@ -2,7 +2,7 @@ from loguru import logger
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from utils.matching_utils import clean_data, exact_match, best_match_jw, number_of_tokens_match
+from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match
 
 logger.add("logs/pipeline_{time}.log")
 
@@ -43,23 +43,7 @@ df_devices = exact_match(df_catalogue_suppliers, df_devices, 'Supplier_tokens', 
 logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_tokens']))
 logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
-df_to_jw_match = df_devices[df_devices['Manufacturer_label'].isnull()]
-df_matched_previously = df_devices[df_devices['Manufacturer_label'].notnull()]
-# find best supplier matches using Jaro-Winkler similarity
-df_to_jw_match[['Manufacturer_label', 'Supplier_score']] = df_to_jw_match['CLN_Manufacturer_tokens'].apply(
-    lambda x: pd.Series(best_match_jw(x, df_catalogue_suppliers, 'Supplier_tokens', 'catalogue_manufacturers_index'))
-)
-
-# filter matches with a score above the threshold
-df_jw_match = df_to_jw_match[df_to_jw_match['Supplier_score'] >= 0.86]
-df_rest = df_to_jw_match[df_to_jw_match['Supplier_score'] < 0.86]
-
-df_devices = pd.concat([df_matched_previously, df_jw_match, df_rest])
-
-logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
-
-logger.info("Remaining to be matched: {}", len(df_rest))
-
+df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', 0.86)
 
 # df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
 # df_catalogue_supplier_distinct_tokens['Supplier_tokens_list'] = df_catalogue_supplier_distinct_tokens['Supplier_tokens'].str.split()
