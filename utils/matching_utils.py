@@ -62,10 +62,13 @@ def clean_data(df: pd.DataFrame,
 def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label):
     # create copies and prepare lowercase comparison columns
     
+    if col_df2_label not in df2.columns:
+        raise Exception("Label column does not align to existing label column")
+
     df_1_trimmed = reference_df.drop_duplicates(col_df_1_for_comparison)[[col_df_1_for_comparison, col_df_1_for_labels]].copy()
     reference_df_cols = df_1_trimmed.columns.tolist()
-    df_2_trimmed = df2[df2['Manufacturer_label'].isnull()].copy()
-    df_2_prelabelled = df2[df2['Manufacturer_label'].notnull()].copy()
+    df_2_trimmed = df2[df2[col_df2_label].isnull()].copy()
+    df_2_prelabelled = df2[df2[col_df2_label].notnull()].copy()
 
     matches = df_1_trimmed.merge(
         df_2_trimmed,
@@ -74,9 +77,11 @@ def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels,
         how='right',
     )
 
-    matches[col_df2_label] = np.where(matches[col_df_1_for_labels].notnull(), matches[col_df_1_for_labels], None)
+    matches[col_df2_label] = matches[col_df_1_for_labels].where(
+        matches[col_df_1_for_labels].notnull()
+    ).astype("Int64")
     matches['level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_' + col_df_1_for_comparison, None)
-
+    print('exact_match_' + col_df_1_for_labels)
     df_devices = pd.concat([matches, df_2_prelabelled]).drop(columns = reference_df_cols)
 
     return df_devices
@@ -118,7 +123,7 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
     # filter matches with a score above the threshold
     df_jw_match = df_to_jw_match[df_to_jw_match[score_col_name] >= score_threshold]
     df_rest = df_to_jw_match[df_to_jw_match[score_col_name] < score_threshold]
-    df_jw_match['level'] = 'jaro_winkler_match_' + col_to_match
+    df_jw_match['level'] = 'jaro_winkler_match_' + reference_col
     df_rest[label_col_name] = None
 
     logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
@@ -127,6 +132,10 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
     reference_df_cols.extend([score_col_name])
     df_output = pd.concat([df_matched_previously, df_jw_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
     
+    df_output[label_col_name] = df_output[label_col_name]
+    # .astype("Int64")
+
+
     return df_output
 
 def number_of_tokens_overlap(name_tokens, df_to_match, col_to_match, col_labels):
