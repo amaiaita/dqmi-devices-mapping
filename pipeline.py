@@ -33,7 +33,7 @@ tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', '
 df_catalogue_suppliers = clean_data(df_catalogue_manufacturers, 'Supplier', 'Supplier_tokens', tokens_to_remove)
 df_devices = clean_data(df_devices, 'CLN_Manufacturer', 'CLN_Manufacturer_tokens', tokens_to_remove)
 
-# correctly label nulls as unmatchable
+# # correctly label nulls as unmatchable
 df_devices['Manufacturer_label'] = np.where((df_devices['CLN_Manufacturer_tokens'].isnull() |
     (df_devices['CLN_Manufacturer_tokens'] == '')), 'missing_manufacturer', None)
 df_devices['level'] = np.where((df_devices['Manufacturer_label'] == 'missing_manufacturer'), 'null_level', None)
@@ -74,72 +74,27 @@ logger.info("Percentage of rows that remain unmatched on the brand field: {:,.2f
 
 logger.info("Starting matching process to remove suppliers not in the catalogue from eligible records")
 
-# df_suppliers_not_in_catalogue = pd.read_csv('data/suppliers_not_in_catalogue.csv')
+df_suppliers_not_in_catalogue = pd.read_csv('data/suppliers_not_in_catalogue.csv')
+logger.info("Suppliers not in catalogue data loaded successfully. Number of records: {}", len(df_suppliers_not_in_catalogue))
 
-# # attempting to REMOVE SUPPLIERS NOT IN CATALOGUE
-# df_tokens_not_match = df_tokens_not_match.drop(['Multiple_matches', 'Brand', 'Supplier','Brand_score', 'CLN_manufacturer_tokens_list', '_merge'], axis='columns')
+df_catalogue_suppliers_not_in_catalogue = clean_data(df_suppliers_not_in_catalogue, 'Supplier_missing', 'Supplier_missing_tokens', tokens_to_remove)
+df_catalogue_suppliers_not_in_catalogue['catalogue_manufacturers_index'] = -1
+logger.info("Starting suppliers not in catalogue column matching process")
 
-# # clean data and extract distinct tokens for manufacturers in both datasets
-# df_not_in_catalogue_suppliers_distinct_tokens = clean_data(df_suppliers_not_in_catalogue, 'Supplier_missing', 'Supplier_missing_tokens')
+#  get rows where the supplier matches exactly based on tokens after cleaning
+df_devices = exact_match(df_catalogue_suppliers_not_in_catalogue, df_devices, 'Supplier_missing_tokens', 'catalogue_manufacturers_index', 'CLN_Manufacturer_tokens', 'Manufacturer_label')
+logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_missing_tokens']))
+logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
-# #  get rows where the brand matches exactly based on tokens after cleaning
-# df_exact_matches_brand = exact_match(df_not_in_catalogue_suppliers_distinct_tokens, df_tokens_not_match, 'Supplier_missing_tokens', 'Supplier_missing', 'CLN_Manufacturer_tokens')
-# logger.info("Exact matches found: {}", len(df_exact_matches_brand))
+df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens', 'Supplier_missing_tokens','catalogue_manufacturers_index', 0.86)
 
-# # get remaining rows to match in later steps 
-# df_not_exact_matches_brand = not_exact_match(df_not_in_catalogue_suppliers_distinct_tokens, df_tokens_not_match, 'Supplier_missing_tokens', 'Supplier_missing', 'CLN_Manufacturer_tokens').drop(['Supplier_missing_tokens', 'Supplier_missing'], axis='columns')
-# logger.info("Rows remaining to be matched: {}", len(df_not_exact_matches_brand))
+df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens_list', 'Supplier_missing_tokens_list', 'catalogue_manufacturers_index', 0.5)
 
+logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
-# # create list of unique brands
-# unique_brands = df_suppliers_not_in_catalogue
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+output_path = f'data/outputs/matching_results{timestamp}.csv'
+df_devices.to_csv(output_path, index=False)
+logger.info("Unmatched rows saved to {}", output_path)
 
-# # find best supplier matches using Jaro-Winkler similarity
-# df_not_exact_matches_brand[['Supplier_missing', 'Supplier_missing_score']] = df_not_exact_matches_brand['CLN_Manufacturer_tokens'].apply(
-#     lambda x: pd.Series(best_match_jw(x, unique_brands))
-# )
-
-
-# # filter matches with a score above the threshold
-# df_jw_match = df_not_exact_matches_brand[df_not_exact_matches_brand['Supplier_missing_score'] >= 0.86]
-# logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
-
-# df_jw_not_match = df_not_exact_matches_brand[df_not_exact_matches_brand['Supplier_missing_score'] < 0.86]
-# logger.info("Remaining to be matched: {}", len(df_jw_not_match))
-
-
-# df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_Manufacturer_tokens'].str.split()
-# df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens_list'] = df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens'].str.split()
-# brand_tokens_list = df_not_in_catalogue_suppliers_distinct_tokens['Supplier_missing_tokens_list'].drop_duplicates().to_list()
-
-# cleaned_brand_tokens_list = {}
-# tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted']
-# for brand in brand_tokens_list:
-#     cleaned_brand = []
-#     for token in brand:
-#         if token not in tokens_to_remove:
-#             cleaned_brand.append(token)
-#     cleaned_brand_tokens_list[' '.join(brand)] = cleaned_brand
-
-# df_jw_not_match['CLN_manufacturer_tokens_list'] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(lambda x: [token for token in x if token not in tokens_to_remove])
-
-# # find number of tokens match
-# df_jw_not_match[['Supplier_missing', 'Supplier_missing_score', 'Multiple_matches']] = df_jw_not_match['CLN_manufacturer_tokens_list'].apply(
-#     lambda x: pd.Series(number_of_tokens_match(x, cleaned_brand_tokens_list))
-# )
-# # filter matches with more than 50% of tokens matching
-# df_tokens_match = df_jw_not_match[df_jw_not_match['Supplier_missing_score'] > 0.5]
-# logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
-
-# # get final remaining unmatched rows
-# df_tokens_not_match = df_jw_not_match[df_jw_not_match['Supplier_missing_score'] < 0.5]
-# logger.info("Final remaining unmatched records: {}", len(df_tokens_not_match))
-
-# logger.info("Percentage of rows that remain unmatched: {:,.2f}%", (len(df_tokens_not_match) / len(df_devices_data_distinct_tokens)) * 100)
-
-# timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-# output_path = f'data/unmatched_rows_{timestamp}.csv'
-# df_tokens_not_match.to_csv(output_path, index=False)
-# logger.info("Unmatched rows saved to {}", output_path)
-
-# logger.info("Matching Manufacturer pipeline completed successfully.\n")
+logger.info("Matching Manufacturer pipeline completed successfully.\n")
