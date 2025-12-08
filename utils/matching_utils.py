@@ -138,47 +138,6 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
 
     return df_output
 
-# def number_of_tokens_overlap(name_tokens, df_to_match, col_to_match, col_labels):
-#     """
-#     Compare a list of tokens (name_tokens) against each row in df_to_match,
-#     where df_to_match[col_to_match] contains a list of tokens.
-#     """
-
-#     # keep only the two necessary columns
-#     df = df_to_match[[col_to_match, col_labels]].copy()
-
-#     best_match = None
-#     best_score = 0
-#     multiple_matches = False
-#     best_match_list = []
-
-#     name_set = set(name_tokens)
-
-#     for idx, row in df.iterrows():
-#         supplier_tokens = row[col_to_match] or []  # ensure list
-#         supplier_set = set(supplier_tokens)
-
-#         if len(supplier_set) == 0:
-#             score = 0
-#         else:
-#             common_tokens = name_set & supplier_set
-#             score = len(common_tokens) / len(supplier_set)
-
-#         if score > best_score:
-#             best_score = score
-#             best_match = row[col_labels]
-#             best_match_list = [row[col_labels]]
-#             multiple_matches = False
-
-#         elif score == best_score and score != 0:
-#             multiple_matches = True
-#             best_match_list.append(row[col_labels])
-
-#     if multiple_matches:
-#         return best_match_list, 0, True
-
-#     return best_match, best_score, False
-
 def number_of_tokens_overlap(name_tokens, df_to_match, col_to_match, col_labels):
     """
     Compare a list of tokens (name_tokens) against each row in df_to_match using vectorized operations.
