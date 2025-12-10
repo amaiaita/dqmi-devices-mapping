@@ -4,6 +4,9 @@ import numpy as np
 from datetime import datetime
 from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match
 
+# params
+jw_threshold = 0.9
+
 logger.add("logs/pipeline_{time}.log")
 
 logger.info("Starting data cleaning pipeline")
@@ -16,8 +19,7 @@ logger.info("Catalogue data loaded successfully. Number of records: {}", len(df_
 df_catalogue_manufacturers = df_catalogue[['Supplier', 'Brand']].drop_duplicates()
 df_catalogue_manufacturers = df_catalogue_manufacturers.reset_index()
 df_catalogue_manufacturers.rename(columns={'index': 'catalogue_manufacturers_index'}, inplace=True)
-
-print(df_catalogue_manufacturers.columns)
+df_catalogue_manufacturers.to_csv('data/catalogue_with_index.csv')
 
 # load devices data
 df_devices_data = pd.read_excel('data/raw_data_and_maps.xlsx')
@@ -40,6 +42,27 @@ df_devices['level'] = np.where((df_devices['Manufacturer_label'] == 'missing_man
 
 logger.info("Null values for manufacturer labelled. Remaining records to label: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
+logger.info("Starting matching process to remove suppliers not in the catalogue from eligible records")
+
+df_suppliers_not_in_catalogue = pd.read_csv('data/suppliers_not_in_catalogue.csv')
+logger.info("Suppliers not in catalogue data loaded successfully. Number of records: {}", len(df_suppliers_not_in_catalogue))
+
+df_catalogue_suppliers_not_in_catalogue = clean_data(df_suppliers_not_in_catalogue, 'Supplier_missing', 'Supplier_missing_tokens', tokens_to_remove)
+df_catalogue_suppliers_not_in_catalogue['catalogue_manufacturers_index'] = -1
+
+logger.info("Starting suppliers not in catalogue column matching process")
+
+#  get rows where the supplier matches exactly based on tokens after cleaning
+df_devices = exact_match(df_catalogue_suppliers_not_in_catalogue, df_devices, 'Supplier_missing_tokens', 'catalogue_manufacturers_index', 'CLN_Manufacturer_tokens', 'Manufacturer_label')
+logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_missing_tokens']))
+logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
+
+df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens', 'Supplier_missing_tokens','catalogue_manufacturers_index', jw_threshold)
+
+df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens_list', 'Supplier_missing_tokens_list', 'catalogue_manufacturers_index', 0.5)
+
+logger.info("Percentage of rows that remain unmatched on the not in catalogue field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
+
 logger.info("Starting supplier column matching process")
 
 #  get rows where the supplier matches exactly based on tokens after cleaning
@@ -47,7 +70,7 @@ df_devices = exact_match(df_catalogue_suppliers, df_devices, 'Supplier_tokens', 
 logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_tokens']))
 logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
-df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', 0.86)
+df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', jw_threshold)
 
 df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens_list', 'Supplier_tokens_list', 'catalogue_manufacturers_index', 0.5)
 
@@ -64,7 +87,7 @@ df_devices = exact_match(df_catalogue_brand, df_devices, 'Brand_tokens', 'catalo
 logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Brand_tokens']))
 logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
-df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens', 'Brand_tokens','catalogue_manufacturers_index', 0.86)
+df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens', 'Brand_tokens','catalogue_manufacturers_index', jw_threshold)
 logger.info("Jaro Winkler matches found: {}", len(df_devices[df_devices['level']=='jaro_winkler_Brand_tokens']))
 logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
@@ -72,25 +95,6 @@ df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_brand, 'Man
 
 logger.info("Percentage of rows that remain unmatched on the brand field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
-logger.info("Starting matching process to remove suppliers not in the catalogue from eligible records")
-
-df_suppliers_not_in_catalogue = pd.read_csv('data/suppliers_not_in_catalogue.csv')
-logger.info("Suppliers not in catalogue data loaded successfully. Number of records: {}", len(df_suppliers_not_in_catalogue))
-
-df_catalogue_suppliers_not_in_catalogue = clean_data(df_suppliers_not_in_catalogue, 'Supplier_missing', 'Supplier_missing_tokens', tokens_to_remove)
-df_catalogue_suppliers_not_in_catalogue['catalogue_manufacturers_index'] = -1
-logger.info("Starting suppliers not in catalogue column matching process")
-
-#  get rows where the supplier matches exactly based on tokens after cleaning
-df_devices = exact_match(df_catalogue_suppliers_not_in_catalogue, df_devices, 'Supplier_missing_tokens', 'catalogue_manufacturers_index', 'CLN_Manufacturer_tokens', 'Manufacturer_label')
-logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_missing_tokens']))
-logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
-
-df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens', 'Supplier_missing_tokens','catalogue_manufacturers_index', 0.86)
-
-df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens_list', 'Supplier_missing_tokens_list', 'catalogue_manufacturers_index', 0.5)
-
-logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 output_path = f'data/outputs/matching_results{timestamp}.csv'
