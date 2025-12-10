@@ -182,7 +182,7 @@ def number_of_tokens_match(logger, df_to_match, df_reference, label_col_name, sc
     )
 
     df_tokens_match = df_to_token_match[df_to_token_match[score_col_name] > score_threshold]
-    df_tokens_match['level'] = 'token_overlap_match_' + col_to_match
+    df_tokens_match['level'] = 'token_overlap_match_' + reference_col
     logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
     
     df_rest = df_to_token_match[df_to_token_match[score_col_name] <= score_threshold]
