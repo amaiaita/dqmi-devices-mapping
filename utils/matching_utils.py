@@ -1,9 +1,17 @@
 import pandas as pd
+import numpy as np
 from pyjarowinkler.distance import get_jaro_winkler_similarity
+
+def remove_tokens(text, tokens):
+        tokens_set = set(tokens)
+        words = text.split()
+        cleaned_words = [w for w in words if w not in tokens_set]
+        return " ".join(cleaned_words)
 
 def clean_data(df: pd.DataFrame,
                 select_col: str,
-                token_col: str):
+                token_col: str,
+                tokens_to_remove: list):
     """
     Clean and normalize text data in a DataFrame column.
     """
@@ -45,103 +53,40 @@ def clean_data(df: pd.DataFrame,
         .apply(lambda tokens: " ".join(tokens) if tokens else "")
     )
 
+    df_output[token_col] = df_output[token_col].astype(str).str.lower().apply(lambda x: remove_tokens(x, tokens_to_remove))
+    df_output[f'{token_col}_list'] = df_output[token_col].str.split()
+
     return df_output
 
 
-def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2):
-    """
-    Performs an exact match between two DataFrames based on lowercase comparison of specified columns.
-    
-    This function creates lowercase versions of the specified columns from both DataFrames and performs
-    a right join to find exact matches. The function returns only rows where a match was found in the
-    reference DataFrame.
-    
-    Parameters
-    ----------
-    reference_df : pd.DataFrame
-        The reference DataFrame containing the data to match against.
-    df2 : pd.DataFrame
-        The second DataFrame to match with the reference DataFrame.
-    col_df_1_for_comparison : str
-        The column name in reference_df to use for comparison.
-    col_df_1_for_labels : str
-        The column name in reference_df to use for labels (included in output).
-    col_df_2 : str
-        The column name in df2 to use for comparison.
-    
-    Returns
-    -------
-    pd.DataFrame
-        A merged DataFrame containing rows where exact matches (case-insensitive) were found.
-        Rows where col_df_1_for_comparison is null are excluded. Lowercase comparison columns
-        are removed from the output.
-    
-    Notes
-    -----
-    - The comparison is case-insensitive, performed on lowercase versions of the columns.
-    - Duplicates in the reference DataFrame are removed before processing.
-    - Column suffixes '_ref' and '_other' are applied to overlapping column names.
-    """
+def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label):
     # create copies and prepare lowercase comparison columns
-    df_1_trimmed = reference_df[[col_df_1_for_comparison, col_df_1_for_labels]].drop_duplicates().copy()
-    df_2_trimmed = df2.copy()
+    
+    if col_df2_label not in df2.columns:
+        raise Exception("Label column does not align to existing label column")
 
-    col1_lower = f'{col_df_1_for_comparison}_lower'
-    col2_lower = f'{col_df_2}_lower'
+    df_1_trimmed = reference_df.drop_duplicates(col_df_1_for_comparison)[[col_df_1_for_comparison, col_df_1_for_labels]].copy()
+    reference_df_cols = df_1_trimmed.columns.tolist()
+    df_2_trimmed = df2[df2[col_df2_label].isnull()].copy()
+    df_2_prelabelled = df2[df2[col_df2_label].notnull()].copy()
 
-    df_1_trimmed[col1_lower] = df_1_trimmed[col_df_1_for_comparison].str.lower()
-    df_2_trimmed[col2_lower] = df_2_trimmed[col_df_2].str.lower()
-
-    # do an inner join on the prepared lowercase token columns to get exact token matches
     matches = df_1_trimmed.merge(
         df_2_trimmed,
-        left_on=col1_lower,
-        right_on=col2_lower,
+        left_on=col_df_1_for_comparison,
+        right_on=col_df_2,
         how='right',
-        suffixes=('_ref', '_other')
     )
 
-    return matches[matches[col_df_1_for_comparison].notnull()].drop(columns=[col1_lower, col2_lower])
+    matches[col_df2_label] = matches[col_df_1_for_labels].where(
+        matches[col_df_1_for_labels].notnull()
+    ).astype("Int64")
+    matches['level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_' + col_df_1_for_comparison, None)
+    print('exact_match_' + col_df_1_for_labels)
+    df_devices = pd.concat([matches, df_2_prelabelled]).drop(columns = reference_df_cols)
 
-def not_exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2):
-    """
-    Not Exact Match Function
+    return df_devices
 
-    This function compares two DataFrames to identify non-matching rows based on a specified column from a reference DataFrame and a column from another DataFrame. It performs a case-insensitive comparison by converting the relevant columns to lowercase.
-
-    Parameters:
-        reference_df (pd.DataFrame): The reference DataFrame containing the primary data for comparison.
-        df2 (pd.DataFrame): The secondary DataFrame to be compared against the reference DataFrame.
-        col_df_1_for_comparison (str): The column name in the reference DataFrame to be used for comparison.
-        col_df_1_for_labels (str): The column name in the reference DataFrame to be used for labeling the results.
-        col_df_2 (str): The column name in the secondary DataFrame to be compared.
-
-    Returns:
-        pd.DataFrame: A DataFrame containing the non-matching rows from the secondary DataFrame, excluding the comparison columns.
-    """
-    # create copies and prepare lowercase comparison columns
-    df_1_trimmed = reference_df[[col_df_1_for_comparison, col_df_1_for_labels]].drop_duplicates().copy()
-    df_2_trimmed = df2.copy()
-
-    col1_lower = f'{col_df_1_for_comparison}_lower'
-    col2_lower = f'{col_df_2}_lower'
-
-    df_1_trimmed[col1_lower] = df_1_trimmed[col_df_1_for_comparison].str.lower()
-    df_2_trimmed[col2_lower] = df_2_trimmed[col_df_2].str.lower()
-
-    # merge with indicator and keep only the non-matching rows from either side
-    matches = df_1_trimmed.merge(
-        df_2_trimmed,
-        left_on=col1_lower,
-        right_on=col2_lower,
-        how='right',
-        suffixes=('_ref', '_other'),
-        indicator=True
-    )
-
-    return matches[matches[col_df_1_for_comparison].isnull()].drop(columns=[col1_lower, col2_lower])
-
-def best_match_jw(name, list_to_match):
+def best_match_jw(name, df_to_match, col_to_match, col_labels):
     """
     Find the best matching supplier for a given name using Jaro-Winkler similarity.
 
@@ -153,53 +98,97 @@ def best_match_jw(name, list_to_match):
         tuple: A tuple containing the best matching supplier (str) and the best score (float).
                If no match is found, returns (None, -1).
     """
+    df_to_match = df_to_match.copy().drop_duplicates(col_to_match)[[col_to_match, col_labels]]
+    dict_to_match = df_to_match.set_index(col_to_match)[col_labels].to_dict()
+    list_to_match = list(dict_to_match.keys())
+
     best_match = None
     best_score = -1
     for supplier in list_to_match:
         score = get_jaro_winkler_similarity(name, supplier)
         if score > best_score:
             best_score = score
-            best_match = supplier
+            best_match = dict_to_match[supplier]
     return best_match, best_score
 
-def number_of_tokens_match(name_tokens, supplier_list):
-    """
-    Calculates the best matching supplier based on the number of common tokens 
-    between the provided name tokens and the suppliers' tokens.
+def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, score_threshold=0.86):
+    df_to_jw_match = df_to_match[df_to_match[label_col_name].isnull()]
+    df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
+    reference_df_cols = df_reference.columns.tolist()
+    # find best supplier matches using Jaro-Winkler similarity
+    df_to_jw_match[[label_col_name, score_col_name]] = df_to_jw_match[col_to_match].apply(
+        lambda x: pd.Series(best_match_jw(x, df_reference, reference_col, reference_labels_col))
+    )
 
-    Parameters:
-        name_tokens (list): A list of tokens representing the name to match.
-        supplier_list (dict): A dictionary where keys are supplier names and 
-                              values are lists of tokens associated with each supplier.
+    # filter matches with a score above the threshold
+    df_jw_match = df_to_jw_match[df_to_jw_match[score_col_name] >= score_threshold]
+    df_rest = df_to_jw_match[df_to_jw_match[score_col_name] < score_threshold]
+    df_jw_match['level'] = 'jaro_winkler_match_' + reference_col
+    df_rest[label_col_name] = None
 
-    Returns:
-        tuple: 
-            - If there are multiple best matches:
-                - list: A list of suppliers that have the highest matching score.
-                - int: The score of the best match (always 0 in this case).
-            - If there is a single best match:
-                - str: The name of the best matching supplier.
-                - float: The score of the best match.
-                - bool: Indicates whether there were multiple matches (False).
+    logger.info("Jaro-Winkler matches found above threshold: {}", len(df_jw_match))
+    logger.info("Remaining to be matched: {}", len(df_rest))
+
+    reference_df_cols.extend([score_col_name])
+    df_output = pd.concat([df_matched_previously, df_jw_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
+    
+    df_output[label_col_name] = df_output[label_col_name]
+    # .astype("Int64")
+
+
+    return df_output
+
+def number_of_tokens_overlap(name_tokens, df_to_match, col_to_match, col_labels):
     """
-    best_match = None
-    best_score = 0
-    multiple_matches = False
-    best_match_list = []
-    for supplier in supplier_list.keys():
-        common_tokens = list(set(name_tokens) & set(supplier_list[supplier]))
-        try:
-            score = len(common_tokens)/len(supplier_list[supplier])
-        except ZeroDivisionError:
-            score = 0
-        if score > best_score:
-            best_score = score
-            best_match = supplier
-            best_match_list = [supplier]
-        elif score == best_score and score != 0:
-            multiple_matches = True
-            best_match_list.append(supplier)
+    Compare a list of tokens (name_tokens) against each row in df_to_match using vectorized operations.
+    """
+    df = df_to_match[[col_to_match, col_labels]].copy()
+    name_set = set(name_tokens) if name_tokens else set()
+
+    # vectorized: compute overlap score for all rows at once
+    df['overlap_count'] = df[col_to_match].apply(
+        lambda tokens: len(name_set & set(tokens)) if tokens else 0
+    )
+    df['supplier_count'] = df[col_to_match].apply(
+        lambda tokens: len(tokens) if tokens else 1  # avoid div by zero
+    )
+    df['score'] = df['overlap_count'] / df['supplier_count']
+
+    # find best score(s)
+    best_score = df['score'].max() if len(df) > 0 else 0
+
+    if best_score == 0:
+        return None, 0, False
+
+    best_matches = df[df['score'] == best_score]
+    multiple_matches = len(best_matches) > 1
+    best_match = best_matches[col_labels].iloc[0]
+    best_match_list = best_matches[col_labels].tolist() if multiple_matches else [best_match]
+
     if multiple_matches:
-        best_score = 0
-        return best_match_list, best_score
-    return best_match, best_score, multiple_matches
+        return best_match_list, 0, True
+
+    return best_match, best_score, False
+
+
+
+def number_of_tokens_match(logger, df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, score_threshold=0.5):
+    df_to_token_match = df_to_match[df_to_match[label_col_name].isnull()]
+    df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
+    reference_df_cols = df_reference.columns.tolist()
+    # find number of tokens match
+    df_to_token_match[[label_col_name, score_col_name, 'Multiple_matches']] = df_to_token_match[col_to_match].apply(
+        lambda x: pd.Series(number_of_tokens_overlap(x, df_reference, reference_col, reference_labels_col))
+    )
+
+    df_tokens_match = df_to_token_match[df_to_token_match[score_col_name] > score_threshold]
+    df_tokens_match['level'] = 'token_overlap_match_' + reference_col
+    logger.info("Token overlaps matches found above threshold: {}", len(df_tokens_match))
+    
+    df_rest = df_to_token_match[df_to_token_match[score_col_name] <= score_threshold]
+    df_rest[label_col_name] = None
+    logger.info("Final remaining unmatched records: {}", len(df_rest))
+
+    reference_df_cols.extend([score_col_name, 'Multiple_matches'])
+    df_output = pd.concat([df_matched_previously, df_tokens_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
+    return df_output
