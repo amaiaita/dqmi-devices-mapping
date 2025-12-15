@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import re
 from pyjarowinkler.distance import get_jaro_winkler_similarity
 
 def remove_tokens(text, tokens):
@@ -115,6 +116,7 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
     df_to_jw_match = df_to_match[df_to_match[label_col_name].isnull()]
     df_matched_previously = df_to_match[df_to_match[label_col_name].notnull()]
     reference_df_cols = df_reference.columns.tolist()
+
     # find best supplier matches using Jaro-Winkler similarity
     df_to_jw_match[[label_col_name, score_col_name]] = df_to_jw_match[col_to_match].apply(
         lambda x: pd.Series(best_match_jw(x, df_reference, reference_col, reference_labels_col))
@@ -133,8 +135,6 @@ def jaro_winkler_match(logger, df_to_match, df_reference, label_col_name, score_
     df_output = pd.concat([df_matched_previously, df_jw_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
     
     df_output[label_col_name] = df_output[label_col_name]
-    # .astype("Int64")
-
 
     return df_output
 
@@ -192,3 +192,95 @@ def number_of_tokens_match(logger, df_to_match, df_reference, label_col_name, sc
     reference_df_cols.extend([score_col_name, 'Multiple_matches'])
     df_output = pd.concat([df_matched_previously, df_tokens_match, df_rest]).drop(columns = reference_df_cols, errors='ignore')
     return df_output
+
+def device_code_level_matching(df_to_match, df_reference, label_col_name, col_to_match, logger=None):
+    df_to_match_trimmed = df_to_match[(df_to_match[label_col_name].isnull()) & (df_to_match['Manufacturer_label'].notnull())].copy()
+    df_2_prelabelled = df_to_match[df_to_match[label_col_name].notnull() | (df_to_match['Manufacturer_label'].isnull())].copy()
+    
+    # prep data
+    df_reference_for_codes = df_reference.copy()
+    df_reference_for_codes['NCP_starts'] = df_reference_for_codes['NPC'].str[:3]
+    NPC_prefixes = df_reference_for_codes['NCP_starts'].unique().tolist()
+    NPC_codes = df_reference_for_codes['NPC'].unique().tolist()
+    logger.info("Device code level matching: {} unique NPC prefixes, {} unique NPC codes", len(NPC_prefixes), len(NPC_codes))
+    
+    MPC_codes = df_reference_for_codes['MPC'].unique().tolist()
+    logger.info("Device code level matching: {} unique MPC codes", len(MPC_codes))
+    
+    EAN_codes = df_reference_for_codes['EAN/GTIN'].astype(str).unique().tolist()
+    logger.info("Device code level matching: {} unique EAN/GTIN codes", len(EAN_codes))
+
+    npc_pattern = re.compile(
+        r"\b(" +
+        "|".join([re.escape(p) + r'[- ]?\d+' for p in NPC_prefixes]) +
+        r")\b",
+        flags=re.IGNORECASE
+    )
+
+    mpc_pattern = re.compile(
+        r"\b(" +
+        "|".join([re.escape(code[:3]) + r'[- ]?' + re.escape(code[3:]) for code in MPC_codes]) +
+        r")\b",
+        flags=re.IGNORECASE
+    )
+
+    ean_pattern = re.compile(
+        r"\b(" +
+        "|".join([re.escape(code[:3]) + r'[- ]?' + re.escape(code[3:]) for code in EAN_codes]) +
+        r")\b",
+        flags=re.IGNORECASE
+    )
+
+    df_to_match_trimmed[[label_col_name, 'device_level', 'codes_failed_to_match']] = df_to_match_trimmed[col_to_match].apply(
+        lambda x: pd.Series(detect_device_code_preference(logger, x, df_reference_for_codes, NPC_codes, npc_pattern, mpc_pattern, ean_pattern))
+    )
+
+    df_devices = pd.concat([df_to_match_trimmed, df_2_prelabelled])
+
+    return df_devices
+
+def detect_device_code_preference(logger, name, df_reference_for_codes, NPC_codes, npc_pattern, mpc_pattern, ean_pattern):
+    # --- NPC CODES ---    
+    failed_codes = None
+    match = npc_pattern.search(name)
+    if match:
+        code = match.group(0).replace("-", "").replace(" ", "")
+        if code in NPC_codes:
+            return code, 'npc_code_match', None
+        else:
+            logger.warning("Detected NPC code '{}' not in reference list", match.group(0))
+            failed_codes = code
+
+    # --- MPC CODES ---    
+
+    match = mpc_pattern.search(name)
+    if match:
+        raw_code = match.group(0)
+        normalized_code = raw_code.replace("-", "").replace(" ", "")
+
+        npc_candidates = df_reference_for_codes.loc[
+            df_reference_for_codes['MPC'] == normalized_code, 'NPC'
+        ]
+
+        if npc_candidates.count() > 1:
+            logger.warning("MPC code '{}' corresponds to multiple NPC codes", normalized_code)
+            failed_codes = normalized_code
+        elif npc_candidates.count() == 1:
+            return npc_candidates.iloc[0], 'mpc_code_match', None
+    
+    # EAN/GTIN codes
+    match = ean_pattern.search(name)
+    if match:
+        raw_code = match.group(0)
+        normalized_code = raw_code.replace("-", "").replace(" ", "")
+
+        npc_candidates = df_reference_for_codes.loc[
+            df_reference_for_codes['EAN/GTIN'] == normalized_code, 'NPC'
+        ]
+
+        if npc_candidates.count() > 1:
+            logger.warning("EAN/GTIN code '{}' corresponds to multiple NPC codes", normalized_code)
+            failed_codes = normalized_code
+        elif npc_candidates.count() == 1:
+            return npc_candidates.iloc[0], 'ean_code_match', None
+    return None, None, failed_codes
