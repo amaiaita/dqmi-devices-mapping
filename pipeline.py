@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching
 
-run_manufacturer_mapping = False
+run_manufacturer_mapping = True
 run_device_name_mapping = True
 manufacturer_mapping_file = ''
 create_log_file = True
@@ -98,8 +98,6 @@ if run_manufacturer_mapping:
     logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
     df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens', 'Brand_tokens','catalogue_manufacturers_index', jw_threshold)
-    logger.info("Jaro Winkler matches found: {}", len(df_devices[df_devices['level']=='jaro_winkler_Brand_tokens']))
-    logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
 
     df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens_list', 'Brand_tokens_list', 'catalogue_manufacturers_index', 0.5)
 
