@@ -3,19 +3,19 @@ from loguru import logger
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching
+from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching
 
 run_manufacturer_mapping = False
 run_device_name_mapping = True
 manufacturer_mapping_file = ''
-create_log_file = False
+create_log_file = True
 
 if create_log_file:
     logger.add("logs/pipeline_{time}.log")
 
 if run_manufacturer_mapping:
     # params
-    jw_threshold = 0.9    
+    jw_threshold = 0.9
 
     logger.info("Starting data cleaning pipeline")
 
@@ -80,7 +80,10 @@ if run_manufacturer_mapping:
     df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', jw_threshold)
 
     df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens_list', 'Supplier_tokens_list', 'catalogue_manufacturers_index', 0.5)
+    logger.info("Number of token overlap matches found: {}", len(df_devices[df_devices['level']=='token_overlap_match_Supplier_missing_tokens_list']))
 
+    df_devices = bag_of_words_supplier_matching(df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens', 'catalogue_manufacturers_index', 'level')
+    logger.info("Bag of words matches found: {}", len(df_devices[df_devices['level']=='bag_of_words_match_Supplier_tokens']))
     logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
     logger.info("Starting brand column matching process")
@@ -103,9 +106,9 @@ if run_manufacturer_mapping:
     logger.info("Percentage of rows that remain unmatched on the brand field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = f'data/outputs/matching_results{timestamp}.csv'
+    output_path = f'data/outputs/matching_results_manufacturer{timestamp}.csv'
     df_devices.to_csv(output_path, index=False)
-    logger.info("Unmatched rows saved to {}", output_path)
+    logger.info("Output saved to {}", output_path)
 
     logger.info("Matching Manufacturer pipeline completed successfully.\n")
 
@@ -139,13 +142,39 @@ if run_device_name_mapping:
 
     df_devices['matched_device'] = np.where((df_devices['CLN_Manufacturer_Device_Name'].isnull() |
         (df_devices['CLN_Manufacturer_Device_Name'] == '')), 'null device', None)
-    df_devices['level'] = np.where((df_devices['CLN_Manufacturer_Device_Name'] == -99), 'null_level', None)
+    df_devices['device_level'] = np.where((df_devices['CLN_Manufacturer_Device_Name'] == -99), 'null_level', None)
 
     logger.info("Null values for device name labelled. Remaining records to label: {}", len(df_devices[df_devices['matched_device'].isnull()]))
-    
+    device_tokens_to_remove = ['and', 'hcted']
     df_devices = device_code_level_matching(df_devices, df_catalogue, 'matched_device', 'CLN_Manufacturer_Device_Name', logger)
     logger.info("Device code level matching completed. Number of records labelled at NPC code level: {}", len(df_devices[df_devices['device_level']=='npc_code_match']))
     logger.info("Device code level matching completed. Number of records labelled at MPC code level: {}", len(df_devices[df_devices['device_level']=='mpc_code_match']))
     logger.info("Device code level matching completed. Number of records labelled at EAN code level: {}", len(df_devices[df_devices['device_level']=='ean_code_match']))
+
+    df_devices['device_manufacturer_concat'] = df_devices['Supplier'].astype(str) + ' ' + df_devices['CLN_Manufacturer_Device_Name'].astype(str)
+    df_devices = clean_data(df_devices, 'device_manufacturer_concat', 'supplier_and_device_name_tokens', device_tokens_to_remove, split_numbers=False)
+    df_catalogue['Device_concat'] = df_catalogue['Supplier'].astype(str) + ' ' + df_catalogue['Base Description'].astype(str) + ' ' + df_catalogue['Secondary Description'].astype(str)
+    df_catalogue = clean_data(df_catalogue, 'Device_concat', 'catalogue_device_name_tokens', device_tokens_to_remove, split_numbers=False)
+
+    df_devices = exact_match(df_catalogue, df_devices, 'catalogue_device_name_tokens', 'NPC', 'supplier_and_device_name_tokens', 'matched_device', True)
+    logger.info("Exact match level matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_catalogue_device_name_tokens']))
     
-    df_devices.to_csv(f'data/outputs/device_name_mapping_test.csv', index=False)
+    df_devices = clean_data(df_devices, 'CLN_Manufacturer_Device_Name', 'device_name_tokens', device_tokens_to_remove, split_numbers=False)
+    df_catalogue = clean_data(df_catalogue, 'Base Description', 'primary_description_tokens', device_tokens_to_remove, split_numbers=False)
+    df_devices = exact_match_with_supplier_filter(df_catalogue, df_devices, 'primary_description_tokens', 'NPC', 'device_name_tokens', 'matched_device', 'Supplier', 'Supplier')
+    logger.info("Exact match level for base description + supplier matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_supplier_and_primary_description_tokens']))
+    df_catalogue = clean_data(df_catalogue, 'Secondary Description', 'secondary_description_tokens', device_tokens_to_remove, split_numbers=False)
+    df_devices = exact_match_with_supplier_filter(df_catalogue, df_devices, 'secondary_description_tokens', 'NPC', 'device_name_tokens', 'matched_device', 'Supplier', 'Supplier')
+    logger.info("Exact match level for secondary description + supplier matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_supplier_and_secondary_description_tokens']))
+
+    df_devices = bag_of_words_matching(df_catalogue, df_devices)
+    logger.info("Bag of words level matching completed. Number of records labelled at bag of words level: {}", len(df_devices[df_devices['device_level']=='bag_of_words_match']))
+
+    logger.info("Percentage of rows that remain unmatched for device: {:,.2f}%", (len(df_devices[df_devices['matched_device'].isnull()])/len(df_devices))*100)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = f'data/outputs/matching_results_devices{timestamp}.csv'
+    df_devices.to_csv(output_path, index=False)
+    logger.info("Unmatched rows saved to {}", output_path)
+
+    logger.info("Matching Devices pipeline completed successfully.\n")

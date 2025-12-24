@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 import re
 from pyjarowinkler.distance import get_jaro_winkler_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+from collections import defaultdict
 
 def remove_tokens(text, tokens):
         tokens_set = set(tokens)
@@ -12,7 +15,8 @@ def remove_tokens(text, tokens):
 def clean_data(df: pd.DataFrame,
                 select_col: str,
                 token_col: str,
-                tokens_to_remove: list):
+                tokens_to_remove: list,
+                split_numbers: bool = True):
     """
     Clean and normalize text data in a DataFrame column.
     """
@@ -39,13 +43,13 @@ def clean_data(df: pd.DataFrame,
         lambda m: m.group(0).replace(" ", ""),
         regex=True
     )
-
-    # pad numbers with spaces
-    df_output[token_col] = df_output[token_col].str.replace(
-        r'(\d+\.?\,?\d*)',
-        r' \1 ',
-        regex=True
-    )
+    if split_numbers:
+        # pad numbers with spaces
+        df_output[token_col] = df_output[token_col].str.replace(
+            r'(\d+\.?\,?\d*)',
+            r' \1 ',
+            regex=True
+        )
 
     # normalize whitespace by splitting and rejoining
     df_output[token_col] = (
@@ -60,7 +64,7 @@ def clean_data(df: pd.DataFrame,
     return df_output
 
 
-def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label):
+def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label, device_match=False):
     # create copies and prepare lowercase comparison columns
     
     if col_df2_label not in df2.columns:
@@ -80,10 +84,39 @@ def exact_match(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels,
 
     matches[col_df2_label] = matches[col_df_1_for_labels].where(
         matches[col_df_1_for_labels].notnull()
-    ).astype("Int64")
-    matches['level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_' + col_df_1_for_comparison, None)
-    print('exact_match_' + col_df_1_for_labels)
+    )#.astype("Int64")
+    l = ''
+    if device_match:
+        l = 'device_'
+    matches[f'{l}level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_' + col_df_1_for_comparison, None)
+
     df_devices = pd.concat([matches, df_2_prelabelled]).drop(columns = reference_df_cols)
+
+    return df_devices
+
+def exact_match_with_supplier_filter(reference_df, df2, col_df_1_for_comparison, col_df_1_for_labels, col_df_2, col_df2_label, df_2_supplier_col, df_reference_supplier_col):
+    # create copies and prepare lowercase comparison columns
+    
+    if col_df2_label not in df2.columns:
+        raise Exception("Label column does not align to existing label column")
+
+    df_1_trimmed = reference_df.drop_duplicates(col_df_1_for_comparison)[[col_df_1_for_comparison, col_df_1_for_labels, df_reference_supplier_col]].copy()
+    df_2_trimmed = df2[df2[col_df2_label].isnull()].copy()
+    df_2_prelabelled = df2[df2[col_df2_label].notnull()].copy()
+    matches = df_1_trimmed.merge(
+        df_2_trimmed,
+        left_on=[col_df_1_for_comparison, df_reference_supplier_col],
+        right_on=[col_df_2, df_2_supplier_col],
+        how='right',
+    )
+
+    matches[col_df2_label] = matches[f'{col_df_1_for_labels}'].where(
+        matches[col_df_1_for_labels].notnull()
+    )#.astype("Int64")
+
+    matches['device_level'] = np.where(matches[col_df_1_for_labels].notnull(), 'exact_match_supplier_and_' + col_df_1_for_comparison, None)
+
+    df_devices = pd.concat([matches, df_2_prelabelled]).drop(columns = ['NPC'])
 
     return df_devices
 
@@ -284,3 +317,103 @@ def detect_device_code_preference(logger, name, df_reference_for_codes, NPC_code
         elif npc_candidates.count() == 1:
             return npc_candidates.iloc[0], 'ean_code_match', None
     return None, None, failed_codes
+
+def bag_of_words_matching(df_catalogue, df_to_match):
+    """Match devices using TF-IDF bag of words similarity."""
+    df_pre_matched = df_to_match[df_to_match['matched_device'].notnull()].copy()
+    df_to_match = df_to_match[df_to_match['matched_device'].isnull()].copy()
+    vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),
+        stop_words="english"
+    )
+    corpus = pd.concat(
+        [df_catalogue["catalogue_device_name_tokens"],
+            df_to_match["device_name_tokens"]]
+    )
+    vectorizer.fit(corpus)
+    x_to_match = vectorizer.transform(df_to_match["device_name_tokens"])
+    x_catalogue = vectorizer.transform(
+        df_catalogue["catalogue_device_name_tokens"]
+    )
+    similarity_matrix = cosine_similarity(x_to_match, x_catalogue)
+
+    catalogue_idx_by_supplier = defaultdict(set)
+
+    for i, supplier in enumerate(df_catalogue["Supplier"]):
+        if pd.notna(supplier):
+            catalogue_idx_by_supplier[supplier].add(i)
+    rows = []
+    all_catalogue_idxs = set(range(len(df_catalogue)))
+
+    for i, supplier in enumerate(df_to_match["Supplier"]):
+        if pd.notna(supplier) and supplier in catalogue_idx_by_supplier:
+            valid_idxs = catalogue_idx_by_supplier[supplier]
+        else:
+            valid_idxs = all_catalogue_idxs
+
+        row = similarity_matrix[i]
+
+        masked_row = np.full_like(row, -1.0)
+        masked_row[list(valid_idxs)] = row[list(valid_idxs)]
+
+        max_score = masked_row.max()
+        if max_score > 0.7:
+            match_idxs = np.where(masked_row == max_score)[0]
+            best_devices = df_catalogue.iloc[match_idxs]["NPC"].tolist()
+        else:
+            match_idxs = []
+            best_devices = []
+
+        rows.append({
+            "best_similarity": max_score,
+            "n_best_matches": len(match_idxs),
+            "best_match_devices": best_devices
+        })
+    df_devices = pd.concat(
+        [df_to_match.reset_index(drop=True), pd.DataFrame(rows)],
+        axis=1
+    )
+    matched = df_devices[
+        (df_devices['best_similarity'] > 0.7) &
+        (df_devices['n_best_matches'] == 1)
+    ]
+    unmatched = df_devices[
+        ~((df_devices['best_similarity'] > 0.7) &
+            (df_devices['n_best_matches'] == 1))
+    ]
+    unmatched['matched_device'] = None
+    matched['matched_device'] = matched['best_match_devices'].str[0]
+    matched['device_level'] = 'bag_of_words_match'
+    df_devices = pd.concat([matched, unmatched, df_pre_matched])
+    return df_devices
+
+def bag_of_words_supplier_matching(df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, level_col):
+    df_pre_matched = df_to_match[df_to_match[label_col_name].notnull()].copy()
+    df_to_match = df_to_match[df_to_match[label_col_name].isnull()].copy()
+    vectorizer = TfidfVectorizer(
+        ngram_range=(1, 2),   # unigrams + bigrams help a lot
+        stop_words="english"
+    )
+
+    # Fit on combined corpus so vectors are comparable
+    corpus = pd.concat([df_to_match[col_to_match], df_reference[reference_col]])
+    vectorizer.fit(corpus)
+
+    X_a = vectorizer.transform(df_to_match[col_to_match])
+    X_b = vectorizer.transform(df_reference[reference_col])
+    similarity_matrix = cosine_similarity(X_a, X_b)
+    best_match_idx = similarity_matrix.argmax(axis=1)
+    best_match_score = similarity_matrix.max(axis=1)
+
+    df_to_match[score_col_name] = best_match_score
+    passed = best_match_score > 0.7
+    df_to_match.loc[passed, label_col_name] = (
+            df_reference.iloc[best_match_idx[passed]][reference_labels_col].values
+        )
+    
+    df_matches = df_to_match[df_to_match[score_col_name] > 0.7]
+    df_matches[level_col] = 'bag_of_words_match_' + reference_col
+    df_rest = df_to_match[df_to_match[score_col_name] <= 0.7]
+    
+    df_devices = pd.concat([df_matches, df_rest, df_pre_matched])
+    return df_devices
