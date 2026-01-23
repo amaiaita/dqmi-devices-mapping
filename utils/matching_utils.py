@@ -227,20 +227,24 @@ def number_of_tokens_match(logger, df_to_match, df_reference, label_col_name, sc
     return df_output
 
 def device_code_level_matching(df_to_match, df_reference, label_col_name, col_to_match, logger=None):
-    df_to_match_trimmed = df_to_match[(df_to_match[label_col_name].isnull()) & (df_to_match['Manufacturer_label'].notnull())].copy()
-    df_2_prelabelled = df_to_match[df_to_match[label_col_name].notnull() | (df_to_match['Manufacturer_label'].isnull())].copy()
-    
+    # df_to_match_trimmed = df_to_match[(df_to_match[label_col_name].isnull()) & (df_to_match['Manufacturer_label'].notnull())].copy()
+    # df_2_prelabelled = df_to_match[df_to_match[label_col_name].notnull() | (df_to_match['Manufacturer_label'].isnull())].copy()
+    df_to_match_trimmed = df_to_match[(df_to_match[label_col_name].isnull())].copy()
+    df_2_prelabelled = df_to_match[df_to_match[label_col_name].notnull()].copy()
     # prep data
     df_reference_for_codes = df_reference.copy()
     df_reference_for_codes['NCP_starts'] = df_reference_for_codes['NPC'].str[:3]
     NPC_prefixes = df_reference_for_codes['NCP_starts'].unique().tolist()
     NPC_codes = df_reference_for_codes['NPC'].unique().tolist()
+    NPC_codes = [code for code in NPC_codes if len(code) >= 5]
     logger.info("Device code level matching: {} unique NPC prefixes, {} unique NPC codes", len(NPC_prefixes), len(NPC_codes))
     
     MPC_codes = df_reference_for_codes['MPC'].unique().tolist()
+    MPC_codes = [code for code in MPC_codes if len(code) >= 5]
     logger.info("Device code level matching: {} unique MPC codes", len(MPC_codes))
-    
+
     EAN_codes = df_reference_for_codes['EAN/GTIN'].astype(str).unique().tolist()
+    EAN_codes = [code for code in EAN_codes if len(code) >= 5]
     logger.info("Device code level matching: {} unique EAN/GTIN codes", len(EAN_codes))
 
     npc_pattern = re.compile(
@@ -388,6 +392,24 @@ def bag_of_words_matching(df_catalogue, df_to_match):
     return df_devices
 
 def bag_of_words_supplier_matching(df_to_match, df_reference, label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, level_col):
+    """
+    TF-IDF (unigrams+bigrams) + cosine similarity matching.
+
+    Computes best similarity between `col_to_match` and `reference_col`, stores
+    the score in `score_col_name`, and assigns the label from
+    `reference_labels_col` to `label_col_name` when score > 0.7. Sets
+    `level_col` for successful matches. Pre-matched rows are preserved.
+
+    Parameters
+    ----------
+    df_to_match, df_reference : pd.DataFrame
+    label_col_name, score_col_name, col_to_match, reference_col, reference_labels_col, level_col : str
+
+    Returns
+    -------
+    pd.DataFrame
+        Updated `df_to_match` with scores and assigned labels for matches.
+    """
     df_pre_matched = df_to_match[df_to_match[label_col_name].notnull()].copy()
     df_to_match = df_to_match[df_to_match[label_col_name].isnull()].copy()
     vectorizer = TfidfVectorizer(

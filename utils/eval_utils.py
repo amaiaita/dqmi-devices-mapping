@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 import ipywidgets as widgets
-from IPython.display import display
+from IPython.display import display, clear_output, HTML
 
 def stratified_proportional_sample(
     df: pd.DataFrame,
@@ -328,3 +328,147 @@ class ClericalReviewer:
                 full.at[i, 'device_match'] = vals.get('device_match')
                 full.at[i, 'device_comment'] = vals.get('device_comment')
             return full
+        
+class DeviceLabeler:
+    """
+    Interactive labeling widget for unlabeled rows in a DataFrame.
+    - df: DataFrame with rows to label (works on a working copy)
+    - cols_to_show: list of columns to display for context
+    - label_col: name of the column to store golden labels (created if missing)
+    - index_col: column name used to store original index to merge back if needed
+    - output_path: where `save_all()` will write CSV
+    - shuffle / random_state: optionally shuffle the working copy reproducibly
+    """
+    def __init__(self, df, cols_to_show=None, label_col='golden_label',
+                 index_col='orig_index', output_path='data/outputs/df_devices_nulls_labeled.csv',
+                 shuffle=True, random_state=42):
+        self.label_col = label_col
+        self.index_col = index_col
+        self.output_path = output_path
+
+        # Make a working copy and ensure label and original-index columns
+        self._df = df.copy().reset_index(drop=True)
+        if self.label_col not in self._df.columns:
+            self._df[self.label_col] = pd.NA
+        if self.index_col not in self._df.columns:
+            self._df[self.index_col] = df.index
+
+        # Optional shuffle for review order
+        if shuffle:
+            self._df = self._df.sample(frac=1, random_state=random_state).reset_index(drop=True)
+
+        # default columns to show if not provided
+        if cols_to_show is None:
+            cols_to_show = ['CLN_Manufacturer', 'Supplier_cat', 'Brand',
+                            'CLN_Manufacturer_Device_Name', 'matched_device', 'device_level']
+        self.cols_to_show = [c for c in cols_to_show if c in self._df.columns]
+
+        # State
+        self.unlabeled = self._df.index[self._df[self.label_col].isna()].tolist()
+        self.pos = 0
+
+        # Widgets
+        self.out = widgets.Output()
+        self.label_input = widgets.Text(placeholder='Type label (e.g. device name or code)', description='Label:')
+        self.save_btn = widgets.Button(description='Save label', button_style='success')
+        self.unlab_btn = widgets.Button(description='Mark unlabelable', button_style='warning')
+        self.prev_btn = widgets.Button(description='Previous')
+        self.next_btn = widgets.Button(description='Next')
+        self.save_all_btn = widgets.Button(description='Save all to CSV')
+        self.status = widgets.Label()
+
+        # Attach handlers
+        self.save_btn.on_click(self._save_label)
+        self.unlab_btn.on_click(self._mark_unlabelable)
+        self.prev_btn.on_click(self._go_prev)
+        self.next_btn.on_click(self._go_next)
+        self.save_all_btn.on_click(self._save_all)
+
+    # Internal helpers
+    def _update_controls(self):
+        n = len(self.unlabeled)
+        self.save_btn.disabled = (n == 0)
+        self.unlab_btn.disabled = (n == 0)
+        self.prev_btn.disabled = (n == 0 or self.pos == 0)
+        self.next_btn.disabled = (n == 0 or self.pos >= n - 1)
+        self.status.value = f"Unlabeled remaining: {n}"
+
+    def _show_current(self):
+        with self.out:
+            clear_output()
+            n = len(self.unlabeled)
+            if n == 0:
+                display(HTML("<b>All rows are labeled.</b>"))
+                return
+            i = self.unlabeled[self.pos]
+            row = self._df.loc[i]
+            display(HTML(f"<b>Unlabeled {self.pos+1}/{n} — original index {row[self.index_col]}</b>"))
+            if self.cols_to_show:
+                display(row[self.cols_to_show].to_frame().T)
+            self.label_input.value = '' if pd.isna(row.get(self.label_col)) else str(row.get(self.label_col))
+
+    # Handlers
+    def _save_label(self, _=None):
+        if not self.unlabeled:
+            return
+        i = self.unlabeled[self.pos]
+        val = self.label_input.value.strip()
+        self._df.at[i, self.label_col] = pd.NA if val == '' else val
+        self.unlabeled.pop(self.pos)
+        if self.pos >= len(self.unlabeled) and self.pos > 0:
+            self.pos -= 1
+        self._update_controls()
+        self._show_current()
+
+    def _mark_unlabelable(self, _=None):
+        if not self.unlabeled:
+            return
+        i = self.unlabeled[self.pos]
+        self._df.at[i, self.label_col] = 'UNLABELABLE'
+        self.unlabeled.pop(self.pos)
+        if self.pos >= len(self.unlabeled) and self.pos > 0:
+            self.pos -= 1
+        self._update_controls()
+        self._show_current()
+
+    def _go_prev(self, _=None):
+        if self.pos > 0:
+            self.pos -= 1
+        self._update_controls()
+        self._show_current()
+
+    def _go_next(self, _=None):
+        if self.pos < len(self.unlabeled) - 1:
+            self.pos += 1
+        self._update_controls()
+        self._show_current()
+
+    def _save_all(self, _=None):
+        self._df.to_csv(self.output_path, index=False)
+        print(f"Saved current labeled df to {self.output_path}")
+
+    # Public API
+    def display(self):
+        """Render the widget in the notebook."""
+        controls = widgets.HBox([self.prev_btn, self.next_btn, self.save_all_btn])
+        actions = widgets.HBox([self.label_input, self.save_btn, self.unlab_btn])
+        self._update_controls()
+        display(widgets.VBox([controls, actions, self.status, self.out]))
+        self._show_current()
+
+    def get_labeled_df(self):
+        """Return the working copy with labels applied."""
+        return self._df.copy()
+
+    def merge_back_to(self, original_df, on=None, how='left'):
+        """
+        Merge labeled column back into the original dataframe.
+        - If `on` is None, it uses the `index_col` (orig_index) to merge.
+        """
+        if on is None:
+            on = self.index_col
+            return original_df.merge(self._df[[self.index_col, self.label_col]],
+                                     left_on=original_df.index, right_on=self.index_col,
+                                     how=how, suffixes=('', '_new')).drop(columns=['key_0'], errors='ignore')
+        else:
+            return original_df.merge(self._df[[on, self.label_col]], on=on, how=how)
