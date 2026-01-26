@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching
 
-run_manufacturer_mapping = True
+run_manufacturer_mapping = False
 run_device_name_mapping = True
 manufacturer_mapping_file = ''
 create_log_file = True
@@ -31,7 +31,7 @@ if run_manufacturer_mapping:
     df_devices_data = pd.read_excel('data/raw_data_and_maps.xlsx')
     logger.info("Devices data loaded successfully. Number of records: {}", len(df_devices_data))
 
-    df_devices = df_devices_data.reset_index()[['index', 'CLN_Manufacturer', 'CLN_Manufacturer_Device_Name']]
+    df_devices = df_devices_data.reset_index()[['index', 'CLN_Manufacturer', 'CLN_Manufacturer_Device_Name', 'CLN_Device_Serial_Number']]
     df_devices.to_csv('data/devices_to_map.csv', index=True)
 
     tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted', 'e direct', 'gmbh', 'europe']
@@ -132,7 +132,7 @@ if run_device_name_mapping:
         how='left',
         suffixes=('_dev', '_cat')
     )
-    df_devices = df_devices[['CLN_Manufacturer', 'CLN_Manufacturer_Device_Name', 'Supplier', 'Manufacturer_label']]
+    df_devices = df_devices[['CLN_Manufacturer', 'CLN_Manufacturer_Device_Name', 'CLN_Device_Serial_Number', 'Supplier', 'Manufacturer_label']]
     df_catalogue = pd.read_excel('data/Devices_catalogue.xlsx')
 
     df_devices['matched_device'] = np.where((df_devices['CLN_Manufacturer_Device_Name'].isnull() |
@@ -162,10 +162,15 @@ if run_device_name_mapping:
     df_devices = exact_match(df_catalogue, df_devices, 'catalogue_device_name_tokens', 'NPC', 'supplier_and_device_name_tokens', 'matched_device', True)
     logger.info("Exact match level matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_catalogue_device_name_tokens']))
 
+    df_devices = device_code_level_matching(df_devices, df_catalogue, 'matched_device', 'CLN_Device_Serial_Number', logger)
+    logger.info("Device code level matching completed for serial number column. Number of records labelled at NPC code level: {}", len(df_devices[df_devices['device_level']=='npc_code_match_CLN_Device_Serial_Number']))
+    logger.info("Device code level matching completed for serial number column. Number of records labelled at MPC code level: {}", len(df_devices[df_devices['device_level']=='mpc_code_match_CLN_Device_Serial_Number']))
+    logger.info("Device code level matching completed for serial number column. Number of records labelled at EAN code level: {}", len(df_devices[df_devices['device_level']=='ean_code_match_CLN_Device_Serial_Number']))
+
     df_devices = device_code_level_matching(df_devices, df_catalogue, 'matched_device', 'CLN_Manufacturer_Device_Name', logger)
-    logger.info("Device code level matching completed. Number of records labelled at NPC code level: {}", len(df_devices[df_devices['device_level']=='npc_code_match']))
-    logger.info("Device code level matching completed. Number of records labelled at MPC code level: {}", len(df_devices[df_devices['device_level']=='mpc_code_match']))
-    logger.info("Device code level matching completed. Number of records labelled at EAN code level: {}", len(df_devices[df_devices['device_level']=='ean_code_match']))
+    logger.info("Device code level matching completed for manufacturer name column. Number of records labelled at NPC code level: {}", len(df_devices[df_devices['device_level']=='npc_code_match_CLN_Manufacturer_Device_Name']))
+    logger.info("Device code level matching completed for manufacturer name column. Number of records labelled at MPC code level: {}", len(df_devices[df_devices['device_level']=='mpc_code_match_CLN_Manufacturer_Device_Name']))
+    logger.info("Device code level matching completed for manufacturer name column. Number of records labelled at EAN code level: {}", len(df_devices[df_devices['device_level']=='ean_code_match_CLN_Manufacturer_Device_Name']))
 
     df_devices = clean_data(df_devices, 'CLN_Manufacturer_Device_Name', 'device_name_tokens', device_tokens_to_remove, split_numbers=False)
     df_catalogue = clean_data(df_catalogue, 'Base Description', 'primary_description_tokens', device_tokens_to_remove, split_numbers=False)
