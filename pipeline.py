@@ -3,9 +3,9 @@ from loguru import logger
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching
+from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching, substring_match
 
-run_manufacturer_mapping = False
+run_manufacturer_mapping = True
 run_device_name_mapping = True
 manufacturer_mapping_file = ''
 create_log_file = True
@@ -74,7 +74,9 @@ if run_manufacturer_mapping:
     df_devices = exact_match(df_catalogue_suppliers, df_devices, 'Supplier_tokens', 'catalogue_manufacturers_index', 'CLN_Manufacturer_tokens', 'Manufacturer_label')
     logger.info("Exact matches found: {}", len(df_devices[df_devices['level']=='exact_match_Supplier_tokens']))
     logger.info("Rows remaining to be matched: {}", len(df_devices[df_devices['Manufacturer_label'].isnull()]))
-
+    
+    df_devices = substring_match(df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'CLN_Manufacturer_tokens','Supplier_tokens', 'catalogue_manufacturers_index', 'level')
+    logger.info("Substring matches found: {}", len(df_devices[df_devices['level']=='substring_match_Supplier_tokens']))
     df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens', 'Supplier_tokens','catalogue_manufacturers_index', jw_threshold)
 
     df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'Supplier_score', 'CLN_Manufacturer_tokens_list', 'Supplier_tokens_list', 'catalogue_manufacturers_index', 0.5)

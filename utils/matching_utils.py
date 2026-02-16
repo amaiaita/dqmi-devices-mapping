@@ -435,3 +435,46 @@ def bag_of_words_supplier_matching(df_to_match, df_reference, label_col_name, sc
     
     df_devices = pd.concat([df_matches, df_rest, df_pre_matched])
     return df_devices
+
+def substring_match(df_to_match, df_reference, label_col_name, col_to_match, reference_col, reference_labels_col, level_col):
+    """
+    Match rows by checking if reference text in df_reference[reference_col] is contained 
+    within text of df_to_match[col_to_match].
+    
+    Parameters
+    ----------
+    df_to_match, df_reference : pd.DataFrame
+    label_col_name, col_to_match, reference_col, reference_labels_col, level_col : str
+    
+    Returns
+    -------
+    pd.DataFrame
+        Updated df_to_match with labels assigned where substring matches found.
+    """
+    df_pre_matched = df_to_match[df_to_match[label_col_name].notnull()].copy()
+    df_to_match = df_to_match[df_to_match[label_col_name].isnull()].copy()
+    
+    reference_dict = df_reference.set_index(reference_col)[reference_labels_col].to_dict()
+    reference_texts = list(reference_dict.keys())
+
+    
+    df_to_match[label_col_name] = df_to_match[col_to_match].apply(
+        lambda x: find_substring_match(x, reference_texts, reference_dict)
+    )
+    
+    df_matches = df_to_match[df_to_match[label_col_name].notnull()]
+    df_matches[level_col] = 'substring_match_' + reference_col
+    df_rest = df_to_match[df_to_match[label_col_name].isnull()]
+    
+    df_devices = pd.concat([df_matches, df_rest, df_pre_matched])
+    return df_devices
+    
+def find_substring_match(text, reference_texts, reference_dict):
+    text = str(text).lower().strip()
+    if not text:
+        return None
+    for ref_text in reference_texts:
+        ref_text_lower = str(ref_text).lower()
+        if ref_text_lower in text:
+            return reference_dict[ref_text]
+    return None
