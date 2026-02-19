@@ -37,6 +37,13 @@ def clean_data(df: pd.DataFrame,
         regex=True
     )
 
+     # remove space after "non"
+    df_output[token_col] = df_output[token_col].str.replace(
+        r'non\s+',
+        'non',
+        regex=True
+    )
+
     # collapse sequences of single-letter tokens: e.g., "w l a" -> "wla"
     df_output[token_col] = df_output[token_col].str.replace(
         r'\b(?:[a-z]\s+){1,}[a-z]\b',
@@ -318,22 +325,25 @@ def detect_device_code_preference(logger, name, df_reference_for_codes, NPC_code
     
     return None, None, failed_codes
 
-def bag_of_words_matching(df_catalogue, df_to_match):
+def bag_of_words_matching(df_catalogue, df_to_match, catalogue_tokens_col, to_match_tokens_col, score_threshold=0.7):
     """Match devices using TF-IDF bag of words similarity."""
     df_pre_matched = df_to_match[df_to_match['matched_device'].notnull()].copy()
     df_to_match = df_to_match[df_to_match['matched_device'].isnull()].copy()
+    # Drop temporary columns from previous iterations (if they exist) to avoid duplicates
+    cols_to_drop = ['best_similarity', 'n_best_matches', 'best_match_devices']
+    df_to_match = df_to_match.drop(columns=cols_to_drop, errors='ignore')
     vectorizer = TfidfVectorizer(
         ngram_range=(1, 2),
         stop_words="english"
     )
     corpus = pd.concat(
-        [df_catalogue["catalogue_device_name_tokens"],
-            df_to_match["device_name_tokens"]]
+        [df_catalogue[catalogue_tokens_col],
+            df_to_match[to_match_tokens_col]]
     )
     vectorizer.fit(corpus)
-    x_to_match = vectorizer.transform(df_to_match["device_name_tokens"])
+    x_to_match = vectorizer.transform(df_to_match[to_match_tokens_col])
     x_catalogue = vectorizer.transform(
-        df_catalogue["catalogue_device_name_tokens"]
+        df_catalogue[catalogue_tokens_col]
     )
     similarity_matrix = cosine_similarity(x_to_match, x_catalogue)
 
@@ -357,7 +367,7 @@ def bag_of_words_matching(df_catalogue, df_to_match):
         masked_row[list(valid_idxs)] = row[list(valid_idxs)]
 
         max_score = masked_row.max()
-        if max_score > 0.7:
+        if max_score > score_threshold:
             match_idxs = np.where(masked_row == max_score)[0]
             best_devices = df_catalogue.iloc[match_idxs]["NPC"].tolist()
         else:
@@ -374,16 +384,16 @@ def bag_of_words_matching(df_catalogue, df_to_match):
         axis=1
     )
     matched = df_devices[
-        (df_devices['best_similarity'] > 0.7) &
+        (df_devices['best_similarity'] > score_threshold) &
         (df_devices['n_best_matches'] == 1)
     ]
     unmatched = df_devices[
-        ~((df_devices['best_similarity'] > 0.7) &
+        ~((df_devices['best_similarity'] > score_threshold) &
             (df_devices['n_best_matches'] == 1))
     ]
     unmatched['matched_device'] = None
     matched['matched_device'] = matched['best_match_devices'].str[0]
-    matched['device_level'] = 'bag_of_words_match'
+    matched['device_level'] = f'bag_of_words_match_{score_threshold}'
     df_devices = pd.concat([matched, unmatched, df_pre_matched])
     return df_devices
 

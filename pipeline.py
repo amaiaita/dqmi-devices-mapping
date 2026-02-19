@@ -5,7 +5,7 @@ import numpy as np
 from datetime import datetime
 from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching, substring_match
 
-run_manufacturer_mapping = True
+run_manufacturer_mapping = False
 run_device_name_mapping = True
 manufacturer_mapping_file = ''
 create_log_file = True
@@ -159,10 +159,15 @@ if run_device_name_mapping:
     df_devices['device_manufacturer_concat'] = df_devices['Supplier'].astype(str) + ' ' + df_devices['CLN_Manufacturer_Device_Name'].astype(str)
     df_devices = clean_data(df_devices, 'device_manufacturer_concat', 'supplier_and_device_name_tokens', device_tokens_to_remove, split_numbers=False)
     df_catalogue['Device_concat'] = df_catalogue['Supplier'].astype(str) + ' ' + df_catalogue['Base Description'].astype(str) + ' ' + df_catalogue['Secondary Description'].astype(str)
-    df_catalogue = clean_data(df_catalogue, 'Device_concat', 'catalogue_device_name_tokens', device_tokens_to_remove, split_numbers=False)
+    # TODO: catalogue_device_name_and_manufacturer_tokens is a concat of manufacturer + device, test out just device tokens with bag of words. 
+    df_catalogue = clean_data(df_catalogue, 'Device_concat', 'catalogue_device_name_and_manufacturer_tokens', device_tokens_to_remove, split_numbers=False)
 
-    df_devices = exact_match(df_catalogue, df_devices, 'catalogue_device_name_tokens', 'NPC', 'supplier_and_device_name_tokens', 'matched_device', True)
-    logger.info("Exact match level matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_catalogue_device_name_tokens']))
+    df_devices = clean_data(df_devices, 'CLN_Manufacturer_Device_Name', 'device_name_tokens', device_tokens_to_remove, split_numbers=False)
+    df_catalogue['Device_only_concat'] = df_catalogue['Base Description'].astype(str) + ' ' + df_catalogue['Secondary Description'].astype(str)
+    df_catalogue = clean_data(df_catalogue, 'Device_only_concat', 'catalogue_device_only_tokens', device_tokens_to_remove, split_numbers=False)
+
+    df_devices = exact_match(df_catalogue, df_devices, 'catalogue_device_name_and_manufacturer_tokens', 'NPC', 'supplier_and_device_name_tokens', 'matched_device', True)
+    logger.info("Exact match level matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_catalogue_device_name_and_manufacturer_tokens']))
 
     df_devices = device_code_level_matching(df_devices, df_catalogue, 'matched_device', 'CLN_Device_Serial_Number', logger)
     logger.info("Device code level matching completed for serial number column. Number of records labelled at NPC code level: {}", len(df_devices[df_devices['device_level']=='npc_code_match_CLN_Device_Serial_Number']))
@@ -182,8 +187,11 @@ if run_device_name_mapping:
     df_devices = exact_match_with_supplier_filter(df_catalogue, df_devices, 'secondary_description_tokens', 'NPC', 'device_name_tokens', 'matched_device', 'Supplier', 'Supplier')
     logger.info("Exact match level for secondary description + supplier matching completed. Number of records labelled: {}", len(df_devices[df_devices['device_level']=='exact_match_supplier_and_secondary_description_tokens']))
 
-    df_devices = bag_of_words_matching(df_catalogue, df_devices)
-    logger.info("Bag of words level matching completed. Number of records labelled at bag of words level: {}", len(df_devices[df_devices['device_level']=='bag_of_words_match']))
+    df_devices = bag_of_words_matching(df_catalogue, df_devices, 'catalogue_device_name_and_manufacturer_tokens', 'supplier_and_device_name_tokens', score_threshold=0.5)
+    logger.info("Bag of words level matching completed. Number of records labelled at bag of words level: {}", len(df_devices[df_devices['device_level']=='bag_of_words_match_0.5']))
+
+    df_devices = bag_of_words_matching(df_catalogue, df_devices, 'catalogue_device_only_tokens', 'device_name_tokens', score_threshold=0.3)
+    logger.info("Bag of words with just device name tokens level matching completed. Number of records labelled at bag of words level: {}", len(df_devices[df_devices['device_level']=='bag_of_words_match_0.3']))
 
     logger.info("Percentage of rows that remain unmatched for device: {:,.2f}%", (len(df_devices[df_devices['matched_device'].isnull()])/len(df_devices))*100)
 
