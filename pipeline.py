@@ -3,10 +3,10 @@ from loguru import logger
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching, substring_match
+from utils.matching_utils import clean_data, exact_match, number_of_tokens_match, jaro_winkler_match, device_code_level_matching, bag_of_words_matching, exact_match_with_supplier_filter, bag_of_words_supplier_matching, substring_match, catalogue_manufacturer_in_device_name_matching
 
-run_manufacturer_mapping = False
-run_device_name_mapping = True
+run_manufacturer_mapping = True
+run_device_name_mapping = False
 manufacturer_mapping_file = ''
 create_log_file = True
 jw_threshold = 0.9
@@ -34,7 +34,7 @@ if run_manufacturer_mapping:
     df_devices = df_devices_data.reset_index()[['index', 'CLN_Manufacturer', 'CLN_Manufacturer_Device_Name', 'CLN_Device_Serial_Number']]
     df_devices.to_csv('data/devices_to_map.csv', index=True)
 
-    tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted', 'e direct', 'gmbh', 'europe']
+    tokens_to_remove = ['ltd', 'limited', 'uk', 'medical', 'new', 'international', 'formerly', 'in', 'nhs', 'technology', 'technologies', 'hcted', 'e direct', 'gmbh', 'europe', 'needle', 'accessories']
 
     # clean data and extract distinct tokens for manufacturers in both datasets
     df_catalogue_suppliers = clean_data(df_catalogue_manufacturers, 'Supplier', 'Supplier_tokens', tokens_to_remove)
@@ -65,6 +65,7 @@ if run_manufacturer_mapping:
     df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens', 'Supplier_missing_tokens','catalogue_manufacturers_index', jw_threshold)
 
     df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'Supplier_missing_score', 'CLN_Manufacturer_tokens_list', 'Supplier_missing_tokens_list', 'catalogue_manufacturers_index', 0.5)
+    df_devices = catalogue_manufacturer_in_device_name_matching(df_devices, df_catalogue_suppliers_not_in_catalogue, 'Manufacturer_label', 'CLN_Manufacturer_Device_Name', 'Supplier_missing_tokens', logger)
 
     logger.info("Percentage of rows that remain unmatched on the not in catalogue field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
@@ -85,6 +86,8 @@ if run_manufacturer_mapping:
     logger.info("Bag of words matches found: {}", len(df_devices[df_devices['level']=='bag_of_words_match_Supplier_tokens']))
     logger.info("Percentage of rows that remain unmatched on the supplier field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
+    df_devices = catalogue_manufacturer_in_device_name_matching(df_devices, df_catalogue_suppliers, 'Manufacturer_label', 'CLN_Manufacturer_Device_Name', 'Supplier_tokens', logger)
+
     logger.info("Starting brand column matching process")
 
     # attempting to continue on to match on the brand field
@@ -99,6 +102,8 @@ if run_manufacturer_mapping:
     df_devices = jaro_winkler_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens', 'Brand_tokens','catalogue_manufacturers_index', jw_threshold)
 
     df_devices = number_of_tokens_match(logger, df_devices, df_catalogue_brand, 'Manufacturer_label', 'Brand_score', 'CLN_Manufacturer_tokens_list', 'Brand_tokens_list', 'catalogue_manufacturers_index', 0.5)
+    
+    df_devices = catalogue_manufacturer_in_device_name_matching(df_devices, df_catalogue_brand, 'Manufacturer_label', 'CLN_Manufacturer_Device_Name', 'Brand_tokens', logger)
 
     logger.info("Percentage of rows that remain unmatched on the brand field: {:,.2f}%", (len(df_devices[df_devices['Manufacturer_label'].isnull()])/len(df_devices))*100)
 
@@ -159,7 +164,6 @@ if run_device_name_mapping:
     df_devices['device_manufacturer_concat'] = df_devices['Supplier'].astype(str) + ' ' + df_devices['CLN_Manufacturer_Device_Name'].astype(str)
     df_devices = clean_data(df_devices, 'device_manufacturer_concat', 'supplier_and_device_name_tokens', device_tokens_to_remove, split_numbers=False)
     df_catalogue['Device_concat'] = df_catalogue['Supplier'].astype(str) + ' ' + df_catalogue['Base Description'].astype(str) + ' ' + df_catalogue['Secondary Description'].astype(str)
-    # TODO: catalogue_device_name_and_manufacturer_tokens is a concat of manufacturer + device, test out just device tokens with bag of words. 
     df_catalogue = clean_data(df_catalogue, 'Device_concat', 'catalogue_device_name_and_manufacturer_tokens', device_tokens_to_remove, split_numbers=False)
 
     df_devices = clean_data(df_devices, 'CLN_Manufacturer_Device_Name', 'device_name_tokens', device_tokens_to_remove, split_numbers=False)
