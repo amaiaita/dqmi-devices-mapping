@@ -488,3 +488,45 @@ def find_substring_match(text, reference_texts, reference_dict):
         if ref_text_lower in text:
             return reference_dict[ref_text]
     return None
+
+def catalogue_manufacturer_in_device_name_matching(df_to_match, df_catalogue_suppliers, label_col_name, col_to_match, catalogue_col_name, logger=None):
+    """
+    Match devices by checking if any catalogue manufacturer is contained in the device name.
+    Returns the Manufacturer_label for the matching catalogue manufacturer.
+    """
+    df_to_match_trimmed = df_to_match[(df_to_match[label_col_name].isnull())].copy()
+    df_2_prelabelled = df_to_match[df_to_match[label_col_name].notnull()].copy()
+    
+    # Get unique catalogue manufacturers and sort by length (longest first to match more specific names)
+    catalogue_manufacturers = df_catalogue_suppliers[[catalogue_col_name, 'catalogue_manufacturers_index']].drop_duplicates()
+    catalogue_manufacturers = catalogue_manufacturers[catalogue_manufacturers[catalogue_col_name].notna()]
+    # Filter out empty strings and strings with only whitespace
+    catalogue_manufacturers = catalogue_manufacturers[catalogue_manufacturers[catalogue_col_name].str.strip() != '']
+    catalogue_manufacturers = catalogue_manufacturers.sort_values(catalogue_col_name, key=lambda x: x.str.len(), ascending=False)
+    
+    manufacturers_list = [
+        {'name': row[catalogue_col_name].lower(), 'index': row['catalogue_manufacturers_index']}
+        for _, row in catalogue_manufacturers.iterrows()
+    ]
+    
+    def find_manufacturer_in_device_name(device_name):
+        if pd.isna(device_name):
+            return None, None
+        device_name_lower = str(device_name).lower()
+        for mfr_dict in manufacturers_list:
+            # Use word boundaries to match complete words/phrases only
+            pattern = r'\b' + re.escape(mfr_dict['name']) + r'\b'
+            if re.search(pattern, device_name_lower):
+                return mfr_dict['index'], f'catalogue_manufacturer_in_device_name_match_{catalogue_col_name}'
+        return None, None
+    
+    df_to_match_trimmed[[label_col_name, 'level']] = df_to_match_trimmed[col_to_match].apply(
+        lambda x: pd.Series(find_manufacturer_in_device_name(x))
+    )
+    
+    matched_count = len(df_to_match_trimmed[df_to_match_trimmed[label_col_name].notnull()])
+    logger.info("Catalogue manufacturer in device name matching completed. Number of records matched: {}", matched_count)
+    
+    df_devices = pd.concat([df_to_match_trimmed, df_2_prelabelled])
+    
+    return df_devices
